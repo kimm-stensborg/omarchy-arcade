@@ -121,7 +121,7 @@ def download(url):
     return data if data[:8] == b"\x89PNG\r\n\x1a\n" else None
 
 
-def fetch_one(rom, title, art_dir, kinds):
+def fetch_one(rom, title, art_dir, kinds, unreachable=None):
     """Returns the path to this ROM's artwork, or "" when there is none."""
     target = os.path.join(art_dir, rom + ".png")
     if os.path.isfile(target) and os.path.getsize(target) > 0:
@@ -135,6 +135,7 @@ def fetch_one(rom, title, art_dir, kinds):
     # the machine is offline says nothing about the artwork, and must not be
     # remembered as a miss.
     answered = False
+    noted = False
 
     for url in thumbnail_urls(title, kinds):
         try:
@@ -142,8 +143,13 @@ def fetch_one(rom, title, art_dir, kinds):
         except urllib.error.HTTPError:
             answered = True  # it replied, it just does not have this one
             continue
-        except (urllib.error.URLError, OSError):
-            continue  # no network, DNS, timeout: nothing was learned
+        except (urllib.error.URLError, OSError) as err:
+            # No network, DNS, timeout: nothing was learned. Worth one line in
+            # the caller's report, once per game rather than once per URL.
+            if unreachable is not None and not noted:
+                unreachable.append("%s (%s)" % (rom, err))
+                noted = True
+            continue
         except ValueError:
             answered = True  # a URL built wrongly; retrying will not help
             continue
@@ -244,9 +250,11 @@ def main(argv):
     if not pending:
         return 0
 
+    unreachable = []
+
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         futures = {
-            pool.submit(fetch_one, rom, titles.get(rom, ""), args.dir, kinds): rom
+            pool.submit(fetch_one, rom, titles.get(rom, ""), args.dir, kinds, unreachable): rom
             for rom in pending
         }
         for future in futures:
@@ -256,6 +264,16 @@ def main(argv):
             except Exception:  # a failed download is a missing tile, never a crash
                 path = ""
             print("%s\t%s" % (rom, path), flush=True)
+
+    # Silence here used to be indistinguishable from success: an install that
+    # fetched nothing because the machine was offline said so nowhere at all.
+    if unreachable:
+        print(
+            "arcade-artwork: %d of %d could not reach %s, nothing recorded; "
+            "they are tried again next time. First: %s"
+            % (len(unreachable), len(pending), BASE_URL, unreachable[0]),
+            file=sys.stderr,
+        )
 
     return 0
 

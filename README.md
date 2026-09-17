@@ -106,6 +106,9 @@ artwork for essentially every arcade romset. `bin/arcade-artwork` fetches them:
   titles never had a box. Change it with `ART_KINDS` in `arcade.conf`.
 - `ARTWORK="off"` in `arcade.conf` means never touch the network. Whatever is
   already cached keeps showing.
+- A fetch that cannot reach the server says so: one line in
+  `~/.cache/omarchy/arcade.log` from `install.sh`, and a warning in the shell
+  log from the overlay. Blank tiles always have an explanation somewhere.
 
 The whole library of 28 games took under a second here, a few MB on disk.
 `install.sh` kicks off the first fetch in the background so the panel is

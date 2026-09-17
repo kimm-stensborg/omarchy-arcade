@@ -117,12 +117,19 @@ fi
 # means that first open is already dressed. Backgrounded, because a large
 # library should not hold up the install.
 if command -v python3 >/dev/null && [[ ${ARTWORK:-on} != off ]]; then
+  # Where the launcher keeps its log, so a failed fetch leaves the same trail a
+  # failed launch does rather than vanishing into /dev/null.
+  log_file=$("$SRC_DIR/bin/arcade-launcher" --config 2>/dev/null |
+    sed -n 's/^LOG_FILE=//p')
+  : "${log_file:=$CACHE_DIR/arcade.log}"
+  mkdir -p "${log_file%/*}"
   (
+    printf '\n=== %s fetching artwork ===\n' "$(date -Is)"
     "$SRC_DIR/bin/arcade-launcher" --list 2>/dev/null |
       cut -f2 | xargs -r -n1 basename | sed 's/\.[^.]*$//' |
-      "$SRC_DIR/bin/arcade-artwork" >/dev/null 2>&1
-  ) &
-  note "fetching artwork in the background"
+      "$SRC_DIR/bin/arcade-artwork" >/dev/null
+  ) >>"$log_file" 2>&1 &
+  note "fetching artwork in the background; anything wrong lands in $log_file"
 fi
 
 # -------------------------------------------------------------- the shortcut

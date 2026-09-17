@@ -213,6 +213,12 @@ Item {
         if (next) root.artMap = next
       }
     }
+    // Why a tile stayed blank -- an unreachable thumbnail server, most often --
+    // belongs in the shell log rather than nowhere.
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text && text.trim().length > 0) console.warn(root.pluginId + ":", text.trim())
+    }
     // Keep going until every game has either an image or a recorded miss.
     onExited: Qt.callLater(function() { root.requestArt() })
   }
