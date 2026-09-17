@@ -5,7 +5,7 @@
 #   ./install.sh                 pick a shortcut interactively
 #   ./install.sh --key "SUPER + A"
 #   ./install.sh --no-bind       just enable the plugin
-#   ./install.sh --no-link       skip the ~/.local/bin/arcade-launcher symlink
+#   ./install.sh --no-link       skip the ~/.local/bin symlinks
 #
 # The shortcut proposed first is SUPER + A, unless Hyprland already has that
 # combination, in which case the first free candidate is proposed instead.
@@ -103,10 +103,10 @@ done
 # for using it from a terminal (--doctor, --list, launching by name).
 if ((link)); then
   mkdir -p "$BIN_DIR"
-  for script in arcade-launcher arcade-rdb-dump; do
+  for script in arcade-launcher arcade-rdb-dump arcade-artwork; do
     ln -sfn "$SRC_DIR/bin/$script" "$BIN_DIR/$script"
   done
-  note "linked arcade-launcher into $BIN_DIR"
+  note "linked arcade-launcher, arcade-rdb-dump and arcade-artwork into $BIN_DIR"
 fi
 
 "$SRC_DIR/bin/arcade-launcher" --rebuild-titles >/dev/null 2>&1 &&

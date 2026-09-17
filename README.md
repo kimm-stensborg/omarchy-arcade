@@ -64,14 +64,15 @@ lines if you would rather have neither.
 ```bash
 install.sh --key "SUPER + F12"   # skip the prompt
 install.sh --no-bind             # just enable the plugin
-install.sh --no-link             # skip the ~/.local/bin symlink
+install.sh --no-link             # skip the ~/.local/bin symlinks
 ./uninstall.sh [--purge]         # remove the block and the symlinks
 omarchy plugin remove io.github.kimm-stensborg.arcade
 ```
 
 `install.sh` also seeds `~/.config/omarchy/arcade.conf` and
 `arcade-titles.tsv` (only when they do not exist), builds the title cache, and
-links `arcade-launcher` into `~/.local/bin` for use from a terminal.
+links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
+`~/.local/bin` for use from a terminal.
 
 ## Keys
 

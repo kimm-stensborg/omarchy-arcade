@@ -23,7 +23,7 @@ PURGE=0
 
 note() { printf '  %s\n' "$*"; }
 
-for script in arcade-launcher arcade-rdb-dump; do
+for script in arcade-launcher arcade-rdb-dump arcade-artwork; do
   if [[ -L "$BIN_DIR/$script" || -e "$BIN_DIR/$script" ]]; then
     rm -f "$BIN_DIR/$script"
     note "removed $BIN_DIR/$script"
