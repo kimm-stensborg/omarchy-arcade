@@ -100,7 +100,8 @@ artwork for essentially every arcade romset. `bin/arcade-artwork` fetches them:
 - The first open fetches in the background, four at a time, and tiles fill in
   as images land. Nothing blocks; a game with no art yet shows its initials.
 - A game the server has nothing for gets a `.miss` marker, so the next open
-  does not ask again. `arcade-artwork --refresh <rom>` forgets that.
+  does not ask again. `arcade-artwork --refresh <rom>` forgets that. Being
+  offline is never a miss: nothing is recorded, and it is tried again next time.
 - Preference order is title screen → in-game snap → boxart, since many arcade
   titles never had a box. Change it with `ART_KINDS` in `arcade.conf`.
 - `ARTWORK="off"` in `arcade.conf` means never touch the network. Whatever is

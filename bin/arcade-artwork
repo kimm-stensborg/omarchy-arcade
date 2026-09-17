@@ -131,11 +131,23 @@ def fetch_one(rom, title, art_dir, kinds):
     if os.path.exists(miss) or not title:
         return ""
 
+    # Whether the server ever actually answered. A download that fails because
+    # the machine is offline says nothing about the artwork, and must not be
+    # remembered as a miss.
+    answered = False
+
     for url in thumbnail_urls(title, kinds):
         try:
             data = download(url)
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        except urllib.error.HTTPError:
+            answered = True  # it replied, it just does not have this one
             continue
+        except (urllib.error.URLError, OSError):
+            continue  # no network, DNS, timeout: nothing was learned
+        except ValueError:
+            answered = True  # a URL built wrongly; retrying will not help
+            continue
+        answered = True
         if not data:
             continue
 
@@ -153,11 +165,14 @@ def fetch_one(rom, title, art_dir, kinds):
         return target
 
     # Remember the miss, so a game the server simply does not have costs one
-    # round of requests rather than one per open.
-    try:
-        open(miss, "a").close()
-    except OSError:
-        pass
+    # round of requests rather than one per open. Only when the server answered:
+    # recording a miss while offline would mark the whole library as artless
+    # until someone ran --refresh on every game by hand.
+    if answered:
+        try:
+            open(miss, "a").close()
+        except OSError:
+            pass
     return ""
 
 
