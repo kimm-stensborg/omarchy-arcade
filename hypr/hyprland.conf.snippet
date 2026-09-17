@@ -1,0 +1,19 @@
+# Arcade launcher - classic hyprland.conf syntax.
+#
+# This is for a stock Hyprland install. On Omarchy use hypr/arcade.lua instead:
+# Omarchy's config is Lua, and windowrulev2 lines placed in ~/.config/hypr are
+# never read.
+
+# `immediate` needs tearing enabled globally.
+general {
+    allow_tearing = true
+}
+
+# RetroArch reports its class as com.libretro.RetroArch.
+windowrulev2 = fullscreen, class:^(com\.libretro\.RetroArch)$
+windowrulev2 = immediate, class:^(com\.libretro\.RetroArch)$
+windowrulev2 = idleinhibit fullscreen, class:^(com\.libretro\.RetroArch)$
+windowrulev2 = noanim, class:^(com\.libretro\.RetroArch)$
+
+# Super + A opens the arcade menu.
+bind = $mainMod, A, exec, ~/.local/bin/arcade-launcher

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.kimm-stensborg.arcade",
+  "name": "Arcade",
+  "version": "1.0.0",
+  "author": "Kimm Stensborg",
+  "license": "MIT",
+  "description": "Pick an arcade game by its real name and boot it into RetroArch",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": { "overlay": "Arcade.qml" }
+}

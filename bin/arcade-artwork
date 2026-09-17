@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""Fetch arcade artwork from libretro's thumbnail server, one PNG per ROM.
+
+The overlay calls this with the ROM names it is about to show. Every name that
+already has a cached image is printed straight back; the rest are downloaded in
+the background and printed as they land, so tiles fill in while you look at
+them.
+
+    arcade-artwork bublbobl gng snowbro2
+    bublbobl<TAB>/home/you/.cache/omarchy/arcade-art/bublbobl.png
+    gng<TAB>/home/you/.cache/omarchy/arcade-art/gng.png
+    snowbro2<TAB>
+
+An empty second field means there is no artwork for that game: a miss is
+recorded so the next open does not ask the network again (--refresh forgets
+them). Stdout is flushed per line; nothing here ever blocks the caller.
+"""
+
+import argparse
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+BASE_URL = "https://thumbnails.libretro.com"
+
+# Systems to look in, in order. A FBNeo romset and a MAME romset use the same
+# short names, so the first system that has the title wins.
+SYSTEMS = (
+    "FBNeo - Arcade Games",
+    "MAME",
+    "MAME 2003-Plus",
+)
+
+# Title screens first: the game's own logo, framed the same way every time, and
+# legible at tile size. An in-game snap is the fallback, then whatever boxart
+# exists -- many arcade titles never had a box.
+KINDS = {
+    "titles": "Named_Titles",
+    "snaps": "Named_Snaps",
+    "boxarts": "Named_Boxarts",
+}
+DEFAULT_KINDS = ("titles", "snaps", "boxarts")
+
+TIMEOUT = 15
+USER_AGENT = "omarchy-arcade/1.0 (+https://github.com/kimm-stensborg/omarchy-arcade)"
+
+# libretro replaces these characters in thumbnail filenames.
+ILLEGAL = re.compile(r"[&*/:`<>?\\|\"]")
+
+
+def cache_home():
+    return os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+
+
+def config_path():
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.environ.get("ARCADE_CONFIG") or os.path.join(config_home, "omarchy", "arcade.conf")
+
+
+def read_config():
+    """The few keys this script cares about, read out of arcade.conf.
+
+    The file is a shell fragment, so only plain KEY=value lines are understood
+    -- which is all the launcher writes there. Keeping the artwork policy in
+    the config rather than in the panel means one place turns it off.
+    """
+    values = {}
+    try:
+        with open(config_path(), "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key in ("ARTWORK", "ART_KINDS", "ART_DIR"):
+                    values[key] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return values
+
+
+def artwork_disabled(value):
+    return str(value).strip().lower() in ("off", "no", "0", "false", "none")
+
+
+def load_titles(path):
+    """rom -> full database title, from the cache arcade-launcher builds."""
+    titles = {}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                rom, tab, title = line.rstrip("\n").partition("\t")
+                if tab and rom and title:
+                    titles.setdefault(rom, title)
+    except OSError:
+        pass
+    return titles
+
+
+def thumbnail_urls(title, kinds):
+    name = urllib.parse.quote(ILLEGAL.sub("_", title) + ".png")
+    for system in SYSTEMS:
+        folder = urllib.parse.quote(system)
+        for kind in kinds:
+            yield "%s/%s/%s/%s" % (BASE_URL, folder, KINDS[kind], name)
+
+
+def download(url):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        if response.status != 200:
+            return None
+        data = response.read()
+    # A PNG or nothing: an HTML error page saved as .png would render as a
+    # broken tile forever.
+    return data if data[:8] == b"\x89PNG\r\n\x1a\n" else None
+
+
+def fetch_one(rom, title, art_dir, kinds):
+    """Returns the path to this ROM's artwork, or "" when there is none."""
+    target = os.path.join(art_dir, rom + ".png")
+    if os.path.isfile(target) and os.path.getsize(target) > 0:
+        return target
+
+    miss = os.path.join(art_dir, rom + ".miss")
+    if os.path.exists(miss) or not title:
+        return ""
+
+    for url in thumbnail_urls(title, kinds):
+        try:
+            data = download(url)
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+            continue
+        if not data:
+            continue
+
+        tmp = target + ".part"
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+            os.replace(tmp, target)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return ""
+        return target
+
+    # Remember the miss, so a game the server simply does not have costs one
+    # round of requests rather than one per open.
+    try:
+        open(miss, "a").close()
+    except OSError:
+        pass
+    return ""
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(
+        prog="arcade-artwork",
+        description="Fetch arcade artwork from libretro's thumbnail server",
+    )
+    parser.add_argument("roms", nargs="*", help="ROM names, without the extension")
+    parser.add_argument("--dir", default=os.path.join(cache_home(), "omarchy", "arcade-art"),
+                        help="where the images are cached")
+    parser.add_argument("--titles", default=os.path.join(cache_home(), "omarchy", "arcade-titles.cache.tsv"),
+                        help="rom<TAB>title cache to resolve names with")
+    parser.add_argument("--kinds", default=",".join(DEFAULT_KINDS),
+                        help="artwork kinds to try, in order (titles,snaps,boxarts)")
+    parser.add_argument("--offline", action="store_true",
+                        help="only report what is already cached")
+    parser.add_argument("--refresh", action="store_true",
+                        help="forget recorded misses and try them again")
+    parser.add_argument("--jobs", type=int, default=4, help="parallel downloads")
+    args = parser.parse_args(argv[1:])
+
+    config = read_config()
+
+    # ARTWORK=off in arcade.conf means never reach for the network; whatever is
+    # already cached is still reported, so turning it off does not blank tiles
+    # that are already there.
+    offline = args.offline or artwork_disabled(config.get("ARTWORK", "on"))
+
+    kind_source = args.kinds if args.kinds != ",".join(DEFAULT_KINDS) else config.get("ART_KINDS", args.kinds)
+    kinds = [k.strip() for k in kind_source.replace(",", " ").split() if k.strip() in KINDS]
+    if not kinds:
+        kinds = list(DEFAULT_KINDS)
+
+    if config.get("ART_DIR") and args.dir == os.path.join(cache_home(), "omarchy", "arcade-art"):
+        args.dir = os.path.expanduser(os.path.expandvars(config["ART_DIR"]))
+
+    try:
+        os.makedirs(args.dir, exist_ok=True)
+    except OSError as err:
+        print("arcade-artwork: cannot use %s (%s)" % (args.dir, err), file=sys.stderr)
+        return 1
+
+    roms = args.roms or [line.strip() for line in sys.stdin if line.strip()]
+    if not roms:
+        return 0
+
+    if args.refresh:
+        for rom in roms:
+            try:
+                os.unlink(os.path.join(args.dir, rom + ".miss"))
+            except OSError:
+                pass
+
+    titles = load_titles(args.titles)
+
+    # Cached images are reported first and without touching the network, so the
+    # grid is already dressed before a single request goes out.
+    pending = []
+    for rom in roms:
+        path = os.path.join(args.dir, rom + ".png")
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            print("%s\t%s" % (rom, path), flush=True)
+        elif offline:
+            print("%s\t" % rom, flush=True)
+        else:
+            pending.append(rom)
+
+    if not pending:
+        return 0
+
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        futures = {
+            pool.submit(fetch_one, rom, titles.get(rom, ""), args.dir, kinds): rom
+            for rom in pending
+        }
+        for future in futures:
+            rom = futures[future]
+            try:
+                path = future.result()
+            except Exception:  # a failed download is a missing tile, never a crash
+                path = ""
+            print("%s\t%s" % (rom, path), flush=True)
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

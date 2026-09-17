@@ -1,0 +1,22 @@
+# Optional: user unit fired by 99-arcade-stick.rules on controller hotplug.
+#
+# Install with:
+#   install -Dm644 arcade-launcher.service ~/.config/systemd/user/arcade-launcher.service
+#   systemctl --user daemon-reload
+#
+# One physical controller usually registers several input devices (js0, event*,
+# sometimes a separate motion or LED node), so the rule can fire three or four
+# times in a second. flock makes the extra firings no-ops: the first one holds
+# the lock for the whole menu, the rest exit immediately instead of stacking up
+# menus on your screen.
+
+[Unit]
+Description=Arcade launcher (controller hotplug)
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n %t/arcade-launcher.lock %h/.local/bin/arcade-launcher
+SuccessExitStatus=0 1

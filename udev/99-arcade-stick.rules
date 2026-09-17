@@ -1,0 +1,15 @@
+# Optional: pop the arcade menu when a stick or pad is plugged in.
+#
+# Install with:
+#   sudo install -m644 99-arcade-stick.rules /etc/udev/rules.d/99-arcade-stick.rules
+#   sudo udevadm control --reload-rules
+#
+# udev itself runs as root with no access to your Wayland session, so it cannot
+# start the launcher directly. Instead the device is tagged for systemd, which
+# hands off to the user unit in this directory (arcade-launcher.service).
+#
+# To limit this to one specific controller rather than every joystick, find its
+# ids with `udevadm info -a /dev/input/js0 | grep -i id_vendor` and add
+# ATTRS{idVendor}=="1234", ATTRS{idProduct}=="5678" to the rule below.
+
+ACTION=="add", SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}=="1", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}="arcade-launcher.service"

@@ -1,0 +1,40 @@
+# Clean display titles for the arcade launcher.
+#
+# Format: <romname><TAB><Display title>   -- the ROM name is the filename
+# without its extension, and the separator must be a real tab. Lines starting
+# with # are ignored. Entries here always beat the generated cache, so this is
+# where you trim the region/revision noise the libretro database carries
+# ("1942 (Revision B)" -> "1942").
+#
+# Anything not listed here falls back to the cache
+# (~/.cache/omarchy/arcade-titles.cache.tsv, built from the libretro .rdb
+# databases), and then to the bare filename.
+
+1942	1942
+1943	1943: The Battle of Midway
+arkanoid	Arkanoid
+arkretrn	Arkanoid Returns
+blktiger	Black Tiger
+bombjack	Bomb Jack
+btime	BurgerTime
+bublbob2	Bubble Bobble II
+bublbobl	Bubble Bobble
+commando	Commando
+dkong	Donkey Kong
+galaga	Galaga
+ghouls	Ghouls'n Ghosts
+gng	Ghosts'n Goblins
+kungfum	Kung-Fu Master
+mspacman	Ms. Pac-Man
+pang	Pang
+pang3	Pang! 3
+rbisland	Rainbow Islands
+snowbro2	Snow Bros. 2: With New Elves
+snowbro3	Snow Bros. 3: Magical Adventure
+snowbros	Snow Bros.: Nick & Tom
+spang	Super Pang
+tnzs	The NewZealand Story
+toki	Toki
+wb3	Wonder Boy III: Monster Lair
+wbml	Wonder Boy in Monster Land
+wboy	Wonder Boy

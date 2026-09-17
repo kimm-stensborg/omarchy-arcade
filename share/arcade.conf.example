@@ -1,0 +1,51 @@
+# ~/.config/omarchy/arcade.conf
+#
+# Configuration for arcade-launcher. This file is sourced by the script, so it
+# is plain shell: VAR=value, quotes where you need them, # for comments.
+# Every setting can also be overridden per-run from the environment, e.g.
+#   ROM_DIR=~/Games/neogeo arcade-launcher
+#
+# Run `arcade-launcher --config` to see what is actually in effect.
+
+# Directory scanned for ROMs (searched two levels deep).
+ROM_DIR="$HOME/Games/roms"
+
+# Extensions to treat as ROMs, space separated.
+#ROM_EXTS="zip 7z chd"
+
+# libretro core used to run them. Leave unset to autodetect: FBNeo first, then
+# MAME, looking in ~/.config/retroarch/cores then /usr/lib/libretro.
+#CORE_PATH="/usr/lib/libretro/fbneo_libretro.so"
+#CORE_PATH="/usr/lib/libretro/mame_libretro.so"
+
+# Optional alternative retroarch.cfg, passed to RetroArch as --config. Handy for
+# an arcade-only profile (CRT shader, bezel, its own input binds) that does not
+# disturb your normal RetroArch setup.
+#RETROARCH_CONFIG="$HOME/.config/retroarch/arcade.cfg"
+
+# dmenu-style menu command. Leave unset to autodetect wofi, then rofi, then
+# fuzzel. The list of titles is piped in on stdin; the choice comes back on
+# stdout.
+#MENU_CMD="wofi --dmenu --insensitive --prompt Arcade"
+#MENU_CMD="rofi -dmenu -i -p Arcade"
+#MENU_CMD="fuzzel --dmenu --prompt=Arcade: "
+
+# Title overrides, generated cache, and log locations.
+#TITLES_FILE="$HOME/.config/omarchy/arcade-titles.tsv"
+#CACHE_FILE="$HOME/.cache/omarchy/arcade-titles.cache.tsv"
+#LOG_FILE="$HOME/.cache/omarchy/arcade.log"
+
+# ---------------------------------------------------------------- artwork
+#
+# Tiles in the Arcade overlay are title screens fetched once from libretro's
+# thumbnail server and cached locally. Set ARTWORK=off to never touch the
+# network; whatever is already cached keeps showing.
+#ARTWORK="on"
+
+# Which artwork to prefer, in order: titles (the game's own title screen),
+# snaps (an in-game frame), boxarts (flyer/box scans, missing for many arcade
+# titles).
+#ART_KINDS="titles snaps boxarts"
+
+# Where the images are cached.
+#ART_DIR="$HOME/.cache/omarchy/arcade-art"

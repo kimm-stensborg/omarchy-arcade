@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Extract "romname<TAB>Clean Title" pairs from libretro RetroArch database files.
+
+RetroArch .rdb files are an 8-byte magic ("RARCHDB\0"), an 8-byte big-endian offset
+to the metadata block, and then a flat run of MessagePack maps -- one per game --
+from byte 16 up to that offset. Each map carries at least "name" (the clean title)
+and usually "rom_name" (the zip the title ships as).
+
+Only the MessagePack subset the libretro databases actually use is decoded, so this
+runs on a stock python3 with no third-party packages.
+"""
+
+import os
+import struct
+import sys
+
+DB_DIRS = (
+    os.path.expanduser("~/.config/retroarch/database/rdb"),
+    "/usr/share/libretro/database/rdb",
+    "/usr/local/share/libretro/database/rdb",
+)
+
+# First file wins for a given rom name; later ones only fill gaps.
+DB_PREFERENCE = (
+    "FBNeo - Arcade Games.rdb",
+    "MAME.rdb",
+    "MAME 2003-Plus.rdb",
+    "MAME 2016.rdb",
+    "MAME 2010.rdb",
+    "MAME 2003.rdb",
+    "MAME 2000.rdb",
+    "HBMAME.rdb",
+)
+
+MAGIC = b"RARCHDB\x00"
+
+
+class Decoder:
+    """Minimal MessagePack reader over an in-memory buffer."""
+
+    def __init__(self, data):
+        self.d = data
+
+    def read(self, p):
+        d = self.d
+        b = d[p]
+        p += 1
+
+        if b <= 0x7F:  # positive fixint
+            return b, p
+        if b >= 0xE0:  # negative fixint
+            return b - 256, p
+        if 0x80 <= b <= 0x8F:  # fixmap
+            return self._map(p, b & 0x0F)
+        if 0x90 <= b <= 0x9F:  # fixarray
+            return self._array(p, b & 0x0F)
+        if 0xA0 <= b <= 0xBF:  # fixstr
+            return self._str(p, b & 0x1F)
+
+        if b == 0xC0:
+            return None, p
+        if b == 0xC2:
+            return False, p
+        if b == 0xC3:
+            return True, p
+        if b == 0xC4:  # bin8
+            return self._bin(p + 1, d[p])
+        if b == 0xC5:  # bin16
+            return self._bin(p + 2, struct.unpack_from(">H", d, p)[0])
+        if b == 0xC6:  # bin32
+            return self._bin(p + 4, struct.unpack_from(">I", d, p)[0])
+        if b == 0xCA:  # float32
+            return struct.unpack_from(">f", d, p)[0], p + 4
+        if b == 0xCB:  # float64
+            return struct.unpack_from(">d", d, p)[0], p + 8
+        if b == 0xCC:
+            return d[p], p + 1
+        if b == 0xCD:
+            return struct.unpack_from(">H", d, p)[0], p + 2
+        if b == 0xCE:
+            return struct.unpack_from(">I", d, p)[0], p + 4
+        if b == 0xCF:
+            return struct.unpack_from(">Q", d, p)[0], p + 8
+        if b == 0xD0:
+            return struct.unpack_from(">b", d, p)[0], p + 1
+        if b == 0xD1:
+            return struct.unpack_from(">h", d, p)[0], p + 2
+        if b == 0xD2:
+            return struct.unpack_from(">i", d, p)[0], p + 4
+        if b == 0xD3:
+            return struct.unpack_from(">q", d, p)[0], p + 8
+        if b == 0xD9:  # str8
+            return self._str(p + 1, d[p])
+        if b == 0xDA:  # str16
+            return self._str(p + 2, struct.unpack_from(">H", d, p)[0])
+        if b == 0xDB:  # str32
+            return self._str(p + 4, struct.unpack_from(">I", d, p)[0])
+        if b == 0xDC:  # array16
+            return self._array(p + 2, struct.unpack_from(">H", d, p)[0])
+        if b == 0xDD:  # array32
+            return self._array(p + 4, struct.unpack_from(">I", d, p)[0])
+        if b == 0xDE:  # map16
+            return self._map(p + 2, struct.unpack_from(">H", d, p)[0])
+        if b == 0xDF:  # map32
+            return self._map(p + 4, struct.unpack_from(">I", d, p)[0])
+
+        raise ValueError("unsupported msgpack byte 0x%02x at offset %d" % (b, p - 1))
+
+    def _str(self, p, n):
+        return self.d[p:p + n].decode("utf-8", "replace"), p + n
+
+    def _bin(self, p, n):
+        return self.d[p:p + n], p + n
+
+    def _array(self, p, n):
+        out = []
+        for _ in range(n):
+            v, p = self.read(p)
+            out.append(v)
+        return out, p
+
+    def _map(self, p, n):
+        out = {}
+        for _ in range(n):
+            k, p = self.read(p)
+            v, p = self.read(p)
+            if isinstance(k, str):
+                out[k] = v
+        return out, p
+
+
+def strip_ext(name):
+    base = os.path.basename(name)
+    root, _ = os.path.splitext(base)
+    return root
+
+
+def harvest(path, titles):
+    """Add rom_name -> title pairs from one .rdb file. Existing keys are kept."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+
+    if not data.startswith(MAGIC):
+        raise ValueError("%s is not a RetroArch database" % path)
+
+    end = struct.unpack_from(">Q", data, 8)[0]
+    if not 16 < end <= len(data):
+        end = len(data)
+
+    dec = Decoder(data)
+    pos = 16
+    added = 0
+
+    while pos < end:
+        try:
+            entry, pos = dec.read(pos)
+        except (ValueError, IndexError, struct.error) as err:
+            print("%s: stopped at offset %d (%s)" % (path, pos, err), file=sys.stderr)
+            break
+
+        if not isinstance(entry, dict):
+            continue
+
+        title = entry.get("name") or entry.get("description")
+        rom = entry.get("rom_name")
+        if not isinstance(title, str) or not title:
+            continue
+
+        for key in filter(None, (strip_ext(rom) if isinstance(rom, str) else None,)):
+            if key not in titles:
+                titles[key] = title
+                added += 1
+
+    return added
+
+
+def database_files():
+    """Preferred databases first, then any other arcade-looking .rdb we can find."""
+    seen = set()
+    found = []
+
+    for name in DB_PREFERENCE:
+        for directory in DB_DIRS:
+            path = os.path.join(directory, name)
+            if path not in seen and os.path.isfile(path):
+                seen.add(path)
+                found.append(path)
+
+    for directory in DB_DIRS:
+        if not os.path.isdir(directory):
+            continue
+        for name in sorted(os.listdir(directory)):
+            lowered = name.lower()
+            if not lowered.endswith(".rdb"):
+                continue
+            if "arcade" not in lowered and "mame" not in lowered and "fbneo" not in lowered:
+                continue
+            path = os.path.join(directory, name)
+            if path not in seen:
+                seen.add(path)
+                found.append(path)
+
+    return found
+
+
+def main(argv):
+    paths = argv[1:] or database_files()
+
+    if not paths:
+        print(
+            "arcade-rdb-dump: no libretro .rdb databases found; install libretro-database-git",
+            file=sys.stderr,
+        )
+        return 2
+
+    titles = {}
+    for path in paths:
+        try:
+            harvest(path, titles)
+        except (OSError, ValueError) as err:
+            print("arcade-rdb-dump: skipping %s (%s)" % (path, err), file=sys.stderr)
+
+    if not titles:
+        print("arcade-rdb-dump: databases yielded no titles", file=sys.stderr)
+        return 3
+
+    out = sys.stdout
+    for rom in sorted(titles):
+        out.write("%s\t%s\n" % (rom, titles[rom].replace("\t", " ")))
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
