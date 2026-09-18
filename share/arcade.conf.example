@@ -70,9 +70,10 @@ ROM_DIR="$HOME/Games/roms"
 # out to. 2-12.
 #MAX_COLUMNS="6"
 
-# How many recently played games lead the wall when nothing is typed, newest
-# first. Never more than fit in one row; 0 keeps the wall alphabetical. 0-12.
-#RECENT_GAMES="6"
+# The order of the wall: "last played" (so Enter on opening replays the last
+# game), "favourites", "most played", "name" or "year". The panel's Sort
+# chip (Alt+O) changes it and writes it here.
+#SORT_BY="last played"
 
 # One tile per game however many regional versions of it are in ROM_DIR, with
 # Tab to step through them. "off" puts every romset on the wall on its own.

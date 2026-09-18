@@ -84,6 +84,33 @@ def read_config():
     return values
 
 
+def games_dir():
+    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.environ.get("ARCADE_GAMES_DIR") or os.path.join(config_home, "omarchy", "arcade-games")
+
+
+def game_art(rom):
+    """The artwork a game asked for in its own settings: a kind, "custom"
+    for a picture of your own, or "" to follow ART_KINDS."""
+    try:
+        with open(os.path.join(games_dir(), rom + ".cfg"), "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                key, sep, value = line.partition("=")
+                if sep and key.strip() == "arcade_art":
+                    return value.strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+
+def kinds_for(rom, kinds):
+    """A game's own choice first, then the usual order to fall back on."""
+    wanted = game_art(rom)
+    if wanted in KINDS:
+        return [wanted] + [k for k in kinds if k != wanted]
+    return kinds
+
+
 def artwork_disabled(value):
     return str(value).strip().lower() in ("off", "no", "0", "false", "none")
 
@@ -129,8 +156,10 @@ def fetch_one(rom, title, art_dir, kinds, unreachable=None):
         return target
 
     miss = os.path.join(art_dir, rom + ".miss")
-    if os.path.exists(miss) or not title:
+    # A picture of your own that has gone missing is not fetched over.
+    if os.path.exists(miss) or not title or game_art(rom) == "custom":
         return ""
+    kinds = kinds_for(rom, kinds)
 
     # Whether the server ever actually answered, and whether anything went
     # unanswered. Only a 404 on every URL is a miss: a machine that is offline,

@@ -73,13 +73,12 @@ check("the game running now is marked", PLAYED[2].playing, true)
 check("and no other", PLAYED.filter(g => g.playing).length, 1)
 check("the older two-column form still reads", PLAYED[4].path, "/r/toki.zip")
 
-check("recent games lead the wall, newest first",
-      titles(M.wallGames(PLAYED, 6)), ["Pang", "Rainbow Islands", "Bubble Bobble", "Galaga", "Toki"])
-check("capped at the row they fit in",
-      titles(M.wallGames(PLAYED, 1)), ["Pang", "Bubble Bobble", "Galaga", "Rainbow Islands", "Toki"])
-check("0 keeps the alphabet", titles(M.wallGames(PLAYED, 0)), titles(PLAYED))
-check("a game is never on the wall twice", M.wallGames(PLAYED, 6).length, PLAYED.length)
-check("a library nobody has played is just the alphabet", titles(M.wallGames(games, 6)), titles(games))
+check("last played leads with the newest, then the alphabet",
+      titles(M.sortGames(PLAYED, "last played")), ["Pang", "Rainbow Islands", "Bubble Bobble", "Galaga", "Toki"])
+check("name keeps the alphabet", titles(M.sortGames(PLAYED, "name")), titles(PLAYED))
+check("an unknown sort is last played", M.sortKey("sideways"), "last played")
+check("a sort from the file is read loosely", M.sortKey(" Most Played "), "most played")
+check("a library nobody has played is just the alphabet", titles(M.sortGames(games, "last played")), titles(games))
 
 check("seconds ago is just now", M.playedAgo(1000, 1030), "just now")
 check("one minute is singular", M.playedAgo(1000, 1000 + 60), "1 minute ago")
@@ -104,8 +103,6 @@ check("with nothing running Enter just plays", M.launchNote(PLAYED[0], null), ""
 const PLAYED_META = M.parseList("Bubble Bobble\t/r/bublbobl.zip\t\t\tBubble Bobble (Japan, Ver 0.1)\t1986\tTaito")
 
 check("year and maker are read", [PLAYED_META[0].year, PLAYED_META[0].maker], ["1986", "Taito"])
-check("the shelf holds the games played, up to its size", M.recentCount(PLAYED, 6), 3)
-check("never more than asked", M.recentCount(PLAYED, 2), 2)
 
 // A shelf of 3 over a wall of 10, 4 to a row: 3..6, 7..10, 11..12.
 const mv = (i, a) => M.wallMove(i, a, 4, 3, 13)
@@ -122,12 +119,108 @@ check("left runs back", mv(3, "left"), 2)
 check("a page is two rows", mv(4, "page-down"), 12)
 check("without a shelf, up from the first row stays", M.wallMove(2, "up", 4, 0, 10), 2)
 
+// ------------------------------------------------ favourites, sorts, filters
+
+const LIB = M.parseList([
+  "Bubble Bobble\t/r/bublbobl.zip\t1000\t\tBubble Bobble\t1986\tTaito\tfavourite\t9",
+  "Galaga\t/r/galaga.zip\t\t\tGalaga\t1981\tNamco\tfavourite",
+  "Pang\t/r/pang.zip\t3000\t\tPang\t1989\tMitchell\t\t2",
+  "Rainbow Islands\t/r/rbisland.zip\t\t\tRainbow Islands\t1987\tTaito",
+  "Toki\t/r/toki.zip\t2000\t\tToki\t198?\tTAD\tfavourite\t2",
+  "Mystery\t/r/mystery.zip",
+].join("\n"))
+check("a favourite and its plays are read", [LIB[0].favourite, LIB[0].plays, LIB[3].favourite, LIB[3].plays],
+      [true, 9, false, 0])
+check("favourites first, each part alphabetical",
+      titles(M.sortGames(LIB, "favourites")), ["Bubble Bobble", "Galaga", "Toki", "Pang", "Rainbow Islands", "Mystery"])
+check("most played; a tie goes to the one played last",
+      titles(M.sortGames(LIB, "most played")), ["Bubble Bobble", "Pang", "Toki", "Galaga", "Rainbow Islands", "Mystery"])
+check("year, oldest first; a decade alone after its years, none at the end",
+      titles(M.sortGames(LIB, "year")), ["Galaga", "Bubble Bobble", "Rainbow Islands", "Pang", "Toki", "Mystery"])
+
+check("show favourites", titles(M.applyFilters(LIB, { show: "favourites" })), ["Bubble Bobble", "Galaga", "Toki"])
+check("show played", titles(M.applyFilters(LIB, { show: "played" })), ["Bubble Bobble", "Pang", "Toki"])
+check("show never played", titles(M.applyFilters(LIB, { show: "unplayed" })), ["Galaga", "Rainbow Islands", "Mystery"])
+check("a decade", titles(M.applyFilters(LIB, { decade: "1980s" })).length, 5)
+check("the decades the library has", M.decadeOptions(LIB), ["", "1980s"])
+check("the makers, most games first", M.makerOptions(LIB), ["", "Taito", "Mitchell", "Namco", "TAD"])
+check("filters combine", titles(M.applyFilters(LIB, { show: "favourites", maker: "Taito" })), ["Bubble Bobble"])
+check("no filters, nothing active", M.filtersActive({ show: "all", decade: "", maker: "" }), false)
+check("one is enough", M.filtersActive({ show: "all", maker: "Taito" }), true)
+check("a filter steps on", M.stepFilter({ show: "all" }, "show", M.showKeys(), 1).show, "favourites")
+check("and wraps back", M.stepFilter({ show: "all" }, "show", M.showKeys(), -1).show, "unplayed")
+check("the empty wall says why", M.emptyNote({ show: "favourites" }), "No favourites yet. Alt+F on a game adds it.")
+
+const STAR_SETS = M.groupGames(M.parseList([
+  "Street Fighter III\t/r/sfiii.zip\t500\t\tStreet Fighter III (Europe 970204)\t\t\t\t3",
+  "Street Fighter III\t/r/sfiiij.zip\t900\t\tStreet Fighter III (Japan 970204)\t\t\tfavourite\t4",
+  "Toki\t/r/toki.zip\t\t\tToki (World)",
+].join("\n")), { "title:street fighter iii": "/r/sfiii.zip" })
+check("a game is a favourite when any version is", STAR_SETS[0].favourite, true)
+check("whichever version is showing", STAR_SETS[0].rom, "sfiii")
+check("its plays are all its versions'", M.playCount(STAR_SETS[0]), 7)
+check("and it was last played when any of them was", M.latestPlay(STAR_SETS[0]), 900)
+check("a game never played says nothing of plays", M.tileNote(STAR_SETS[1], 1000, "most played"), "")
+check("unfavouriting takes it off the version that has it",
+      M.favouriteArgs(STAR_SETS[0]), ["--unfavourite", "sfiiij"])
+check("favouriting marks the version showing", M.favouriteArgs(STAR_SETS[1]), ["--favourite", "toki"])
+check("nothing selected, nothing to do", M.favouriteArgs(null), [])
+check("plays on the tile, sorted by them", M.tileNote(LIB[0], 1000, "most played"), "9 plays")
+check("the year, sorted by it", M.tileNote(LIB[0], 1000, "year"), "1986")
+
+check("ZL or ZR makes a favourite", [M.stickAction("l2", "wall"), M.stickAction("r2", "wall")], ["favourite", "favourite"])
+check("the stick clicks sort and filter", [M.stickAction("l3", "wall"), M.stickAction("r3", "wall")], ["sort", "show"])
+check("the stick's favourite key is its own name for it",
+      M.favouriteStickKey({ binds: { r2: { spec: "8", label: "ZR" } } }), "ZR")
+check("no trigger, no favourite key", M.favouriteStickKey({ binds: {} }), "")
+
 check("the facts line", M.gameFacts(Object.assign({}, PLAYED_META[0], { lastPlayed: 1000 }), 1000 + 7200),
       "Taito  ·  1986  ·  played 2 hours ago  ·  bublbobl.zip")
 check("keyboard hints", M.wallHints(false, false).map((h) => h.keys.join("+") + " " + h.label),
       ["Enter Play", "Alt+A Add", "Alt+S Settings", "Esc Close"])
+check("keyboard hints with a game to favourite",
+      M.wallHints(false, false, { on: false }).map((h) => h.keys.join("+") + " " + h.label),
+      ["Enter Play", "Alt+F Favourite", "Alt+E Edit", "Alt+A Add", "Alt+S Settings", "Esc Close"])
+check("and one to unfavourite, on the stick",
+      M.wallHints(true, false, { on: true, stickKey: "ZR" }).map((h) => h.keys.join("+") + " " + h.label),
+      ["B Play", "ZR Unfavourite", "− Settings", "Home Close"])
 check("stick hints, with versions", M.wallHints(true, true).map((h) => h.keys.join("+") + " " + h.label),
       ["B Play", "Y+X Version", "− Settings", "Home Close"])
+
+// -------------------------------------------------------------- one game
+
+const GAME = M.parseGame([
+  "GAME\tbublbobl\tpresent",
+  "GAME_FILE\t/c/arcade-games/bublbobl.cfg",
+  "TITLE\tBubble Bobble\tdefault",
+  "ART\tcustom\tgame",
+  "SHADER\tcrt/crt-geom.slangp\tgame",
+  "SMOOTH\t\tdefault",
+  "ASPECT\tcore\tgame",
+  "OPTIONS_SHADER\tnone\tcrt/crt-royale.slangp\tcrt/crt-geom.slangp",
+  "BIND\tb1\tspace\tgame",
+  "BIND\tb2\tz\tshared",
+].join("\n"))
+check("the game is read", [GAME.rom, GAME.present], ["bublbobl", true])
+const grows = M.gameRows(GAME)
+const grow = (k) => grows.find((r) => r.key === k)
+check("the name row is typed", [grow("TITLE").kind, grow("TITLE").value], ["text", "Bubble Bobble"])
+check("the database's name is not the game's own", M.isOverridden(grow("TITLE")), false)
+check("a picture of your own shows as such", M.displayValue(grow("ART")), "your own picture")
+check("and lights its own row", [grow("ART_IMAGE").value, M.isOverridden(grow("ART_IMAGE"))], ["custom", true])
+check("shaders are offered by name", grow("SHADER").options, ["", "none", "crt/crt-royale.slangp", "crt/crt-geom.slangp"])
+check("and shown by name", M.displayValue(grow("SHADER")), "crt-geom")
+check("nothing set is RetroArch's", [M.displayValue(grow("SMOOTH")), M.describeSource(grow("SMOOTH"))],
+      ["as RetroArch", "as RetroArch has it"])
+check("a set one says it is this game's", M.describeSource(grow("ASPECT")), "set for this game only")
+check("the shape reads as words", M.displayValue(grow("ASPECT")), "the game's own")
+check("a control of its own", [grow("b1").value, grow("b1").source, M.isOverridden(grow("b1"))], ["space", "game", true])
+check("a shared one", [grow("b2").value, M.describeSource(grow("b2"))], ["z", "the arcade's control, shared by every game"])
+check("controls say they are this game's", grow("b1").group, "Controls for this game")
+check("a pending change shows before it is written",
+      M.displayValue(M.withPending(grows, { SMOOTH: "smooth" }).find((r) => r.key === "SMOOTH")), "smoothed")
+check("a name change re-reads the wall", M.gameWriteEffects(["TITLE"]), { library: true, artwork: false })
+check("an artwork change re-dresses the tile", M.gameWriteEffects(["ART"]), { library: false, artwork: true })
 
 // ------------------------------------------------------------ adding games
 
@@ -268,7 +361,7 @@ check("coin opens the settings", M.stickAction("select", "wall"), "settings")
 check("in the settings B changes a row", M.stickAction("b", "settings"), "activate")
 check("and A leaves them", M.stickAction("a", "settings"), "back")
 check("with a problem showing, B re-checks", M.stickAction("b", "problem"), "recheck")
-check("buttons with no job do nothing", M.stickAction("l2", "wall"), "")
+check("buttons with no job do nothing", M.stickAction("select", "problem") && M.stickAction("y", "problem"), "")
 check("a held lever repeats", M.stickRepeats("down"), true)
 check("a held B does not", M.stickRepeats("play"), false)
 

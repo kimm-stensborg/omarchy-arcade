@@ -43,6 +43,7 @@ printf '#!/bin/sh\n[ "$1" = -- ] && shift\nexec "$@"\n' >"$sandbox/bin/uwsm-app"
 # crash.zip takes RetroArch down with it.
 cat >"$sandbox/bin/fakearch" <<'FAKE'
 #!/bin/bash
+[[ -n "${ARCADE_TEST_ARGS-}" ]] && printf '%s\n' "$*" >>"$ARCADE_TEST_ARGS"
 # A test load (--max-frames) runs a couple of frames and quits, as RetroArch
 # does -- "Unloading game" included, which is not a failure there.
 if [[ " $* " == *" --max-frames="* ]]; then
@@ -73,6 +74,7 @@ FAKE
 chmod +x "$sandbox/bin/"*
 : >"$XDG_CONFIG_HOME/retroarch/cores/fbneo_libretro.so"
 export PATH="$sandbox/bin:$PATH"
+export ARCADE_TEST_ARGS="$sandbox/args"
 
 conf="$XDG_CONFIG_HOME/omarchy/arcade.conf"
 profile="$XDG_CONFIG_HOME/omarchy/arcade-retroarch.cfg"
@@ -164,6 +166,79 @@ printf 'neogeo\tNeo Geo Test Menu\n' >"$XDG_CONFIG_HOME/omarchy/arcade-titles.ts
 check "a title of your own brings a listed BIOS set back" \
   "$("$launcher" --list | cut -f1 | grep -c '^Neo Geo Test Menu$')" "1"
 rm "$XDG_CONFIG_HOME/omarchy/arcade-titles.tsv"
+
+# ---------------------------------------------------------------- favourites
+
+favs="$XDG_CONFIG_HOME/omarchy/arcade-favourites"
+starred() { "$launcher" --list | awk -F'\t' '$8 == "favourite" { print $1 }' | tr '\n' '|'; }
+check "nothing is starred to begin with" "$(starred)" ""
+"$launcher" --favourite bublbobl "$HOME/Games/roms/mystery.zip" bublbobl
+check "starring by name or path, each once" "$(tr '\n' '|' <"$favs")" "bublbobl|mystery|"
+check "and the listing says so" "$(starred)" "Bubble Bobble|mystery|"
+"$launcher" --unfavourite mystery
+check "unstarring takes it out again" "$(tr '\n' '|' <"$favs")" "bublbobl|"
+"$launcher" --unfavourite mystery
+check "unstarring what is not starred is fine" "$?" "0"
+"$launcher" --favourite 'two words' 2>/dev/null
+check "a name with a space is refused" "$?" "64"
+"$launcher" --favourite 2>/dev/null
+check "so is no name at all" "$?" "64"
+"$launcher" --unfavourite bublbobl
+
+# ------------------------------------------------------------- game settings
+
+game() { "$launcher" --game "$1" | awk -F'\t' -v k="$2" '$1 == k { print $2 "|" $3 }'; }
+gbind() { "$launcher" --game "$1" | awk -F'\t' -v k="$2" '$1 == "BIND" && $2 == k { print $3 "|" $4 }'; }
+gcfg="$XDG_CONFIG_HOME/omarchy/arcade-games/bublbobl.cfg"
+check "an untouched game has its database title" "$(game bublbobl TITLE)" "Bubble Bobble|default"
+check "and RetroArch decides its picture" "$(game bublbobl SMOOTH)" "|default"
+check "and no file of its own" "$([[ -e "$gcfg" ]] && echo yes || echo no)" "no"
+
+"$launcher" --game-set bublbobl TITLE="Bubble Bobble (my way)"
+check "a title of its own" "$(game bublbobl TITLE)" "Bubble Bobble (my way)|game"
+check "is the title the wall shows" "$("$launcher" --list | awk -F'\t' '$2 ~ /bublbobl/ { print $1 }')" "Bubble Bobble (my way)"
+"$launcher" --game-set bublbobl TITLE=
+check "an empty title gives the database's back" "$(game bublbobl TITLE)" "Bubble Bobble|default"
+
+"$launcher" --game-set bublbobl SMOOTH=smooth ASPECT=4:3 INTEGER=on ROTATE=90
+check "picture settings read back" \
+  "$(game bublbobl SMOOTH),$(game bublbobl ASPECT),$(game bublbobl INTEGER),$(game bublbobl ROTATE)" \
+  "smooth|game,4:3|game,on|game,90|game"
+check "as RetroArch keys" "$(grep -c '^video_smooth = "true"$\|^aspect_ratio_index = "0"$\|^video_rotation = "1"$' "$gcfg")" "3"
+check "the file never saves into RetroArch's own config" "$(grep -c '^config_save_on_exit = "false"$' "$gcfg")" "1"
+"$launcher" --game-set bublbobl ASPECT=
+check "a reset takes the line out" "$(grep -c 'aspect_ratio' "$gcfg")" "0"
+"$launcher" --game-set bublbobl ASPECT=wide 2>/dev/null
+check "an unknown value is refused" "$?" "64"
+
+check "controls start as the shared ones" "$(gbind bublbobl b1 | cut -d'|' -f2)" "shared"
+"$launcher" --game-set bublbobl b1=space
+check "one control of its own" "$(gbind bublbobl b1)" "space|game"
+check "the rest stay shared" "$(gbind bublbobl b2 | cut -d'|' -f2)" "shared"
+check "and the arcade binds are untouched" "$(cat "$profile" 2>/dev/null | grep -c 'input_player1_b = "space"')" "0"
+"$launcher" --game-set bublbobl nosuch=x 2>/dev/null
+check "a key that is not a setting is refused" "$?" "64"
+
+check "no shader preset outside the shader directory" \
+  "$("$launcher" --game-set bublbobl SHADER=../../etc/passwd 2>/dev/null; echo $?)" "64"
+"$launcher" --game-set bublbobl SHADER=none
+check "no shader at all" "$(game bublbobl SHADER),$(grep -c 'video_shader_enable = "false"' "$gcfg")" "none|game,1"
+
+art="$XDG_CACHE_HOME/omarchy/arcade-art"
+mkdir -p "$art"
+printf 'old' >"$art/bublbobl.png"
+"$launcher" --game-set bublbobl ART=snaps
+check "another kind of artwork drops the cached picture" "$([[ -e "$art/bublbobl.png" ]] && echo kept || echo gone)" "gone"
+printf 'not an image' >"$sandbox/fake.png"
+"$launcher" --game-image bublbobl "$sandbox/fake.png" 2>/dev/null
+check "only a real picture is taken" "$?" "64"
+printf '\x89PNG\r\n\x1a\nrest' >"$sandbox/mine.png"
+"$launcher" --game-image bublbobl "$sandbox/mine.png"
+check "a picture of your own becomes the tile" "$(cmp -s "$sandbox/mine.png" "$art/bublbobl.png" && echo same)" "same"
+check "and is marked as yours" "$(game bublbobl ART)" "custom|game"
+
+# good.zip is launched further down; its own file should go with it.
+"$launcher" --game-set good SMOOTH=sharp
 
 # ------------------------------------------------------------------ controls
 
@@ -317,6 +392,8 @@ check "and the game is running" "$(games_running)" "1"
 first="$(running_pid)"
 check "under the pid the launcher wrote down" "$(kill -0 "$first" 2>/dev/null && echo alive)" "alive"
 check "the play is remembered" "$(grep -c "good.zip" "$history")" "1"
+check "the game's own settings are loaded after the arcade binds" \
+  "$(grep -v -- '--max-frames' "$ARCADE_TEST_ARGS" | grep -c -- '--appendconfig .*|.*/arcade-games/good.cfg')" "1"
 check "the listing says it is playing" \
   "$("$launcher" --list | awk -F'\t' '$2 ~ /good.zip$/ { print ($3 > 0) "," $4 }')" "1,playing"
 sleep 1
@@ -330,6 +407,14 @@ check "rather than replacing it" "$(grep -c -- "--config" "$sandbox/started")" "
 check "launching it again starts no second copy" "$(games_running)" "1"
 check "it brings the running one forward" "$(grep -c "pid:$first" "$focused")" "1"
 check "and counts as playing it again" "$(grep -c "good.zip" "$history")" "2"
+check "the listing counts the plays" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /good.zip$/ { print $9 }')" "2"
+# A history folded down to one line per game keeps its count.
+cp "$history" "$sandbox/history.keep"
+printf '1\t%s\t5\n' "$HOME/Games/roms/good.zip" >>"$history"
+check "a folded line carries its plays" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /good.zip$/ { print $9 }')" "7"
+cp "$sandbox/history.keep" "$history"
 
 "$launcher" other
 eventually '! kill -0 "$first" 2>/dev/null'

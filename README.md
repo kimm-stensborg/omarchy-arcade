@@ -84,6 +84,11 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `PgUp` `PgDn`, `Home` `End` | jump |
 | `Enter` | launch the selected game, or return to it if it is running |
 | `Tab` `Shift+Tab` | another version of the selected game |
+| `Alt+F` | make the selected game a favourite, or not |
+| `Alt+O` | the next sort order: last played, favourites, most played, name, year (`Shift` for the previous) |
+| `Alt+V` `Alt+D` `Alt+M` | filter: which games, decade, maker (`Shift` for the previous) |
+| `Alt+0` | clear the filters |
+| `Alt+E` | this game's own settings: name, artwork, picture, controls (again to close them) |
 | `Alt+A` | add games: pick romsets in a file chooser (or `+` in the header) |
 | `F5` | re-read the ROM directory |
 | `Alt+S` | open the settings, controls included (again to close them) |
@@ -91,15 +96,59 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 
 ## The wall
 
-With nothing typed, the games you last played sit on a **Continue playing**
-shelf above the rest, newest first. Opening the panel and pressing `Enter`
-therefore puts you back in the last game. The shelf holds at most one row
-(`RECENT_GAMES`, `0` turns it off) and stays put while **All games** scrolls
-underneath, alphabetically, with no game appearing twice. Up from the wall's
-first row lands on the shelf, and down from the shelf lands back on the wall
-in the same column. The first time the panel opens after an upgrade, the
-history is built from the launch headers already in `arcade.log`. After that
-it is kept in `~/.local/state/omarchy/arcade-history.tsv`.
+The wall is the whole library in one grid, in the order the **Sort** chip
+under the search field says:
+
+| Sort | Order |
+|------|-------|
+| Last played | newest first, then the games never played, by name. The default: opening the panel and pressing `Enter` puts you back in the last game |
+| Favourites | your favourites first, then the rest, each by name |
+| Most played | the most plays first; a tie goes to the one played last |
+| Name | alphabetical |
+| Year | oldest first; a game the database dates only to a decade ("198?") comes after that decade's dated ones, and a game with no year comes last |
+
+`Alt+O` steps through them (`Shift` goes back), and so does a click on the
+chip (a right click goes back). The order is written to `arcade.conf` as
+`SORT_BY`, so the wall opens the same way next time. The line under each tile
+fits the order: the plays when sorted by plays, the year when sorted by year,
+otherwise when you last played it.
+
+The chips beside it filter the wall, and are lit while they do:
+
+| Chip | Key | Shows |
+|------|-----|-------|
+| All games / Favourites / Played / Never played | `Alt+V` | which games |
+| a decade | `Alt+D` | only the games from that decade, e.g. 1980s |
+| a maker | `Alt+M` | only that maker's games. The makers with the most games come first |
+| Clear filters | `Alt+0` | everything again |
+
+The decades and makers on offer are the ones your library actually has, so no
+choice ever leaves the wall empty by itself. A search keeps the filters, but
+ranks by how well each game matches rather than by the sort. Filters are for
+one open of the panel, like the search: it always opens on the whole library.
+
+When you last played a game and how often come from
+`~/.local/state/omarchy/arcade-history.tsv`. The first time the panel opens
+after an upgrade, that history is built from the launch headers already in
+`arcade.log`.
+
+### Favourites
+
+`Alt+F` (or ZL/ZR on the stick) makes the selected game a favourite, and a
+heart appears beside its name. The same key takes it off again. Sort by
+**Favourites** to have them lead the wall, or show only **Favourites** with
+`Alt+V`.
+
+A favourite belongs to the game, not to one version of it: marking Street
+Fighter III in its Japanese version marks the tile, whichever version `Tab`
+shows. Favourites are kept by ROM name, one per line, in
+`~/.config/omarchy/arcade-favourites`, so they survive moving `ROM_DIR` and
+are easy to edit by hand. From a terminal:
+
+```bash
+arcade-launcher --favourite bublbobl pang
+arcade-launcher --unfavourite pang
+```
 
 The selected game lifts out of the wall with a glow, and its title screen,
 blurred, lights the whole screen behind the panel. The bar along the bottom
@@ -149,6 +198,40 @@ RetroArch is closed and a notification says why:
 A launch that failed is not counted as a game played. The launcher waits up to
 twenty seconds for an answer: a large CHD can take that long to load, and a
 guess would close a game that was about to start.
+
+## A game's own settings
+
+`Alt+E`, or the pencil beside the heart on the selected tile, opens the
+settings of that one game, in the same editor as the arcade's own:
+
+| Row | Does |
+|-----|------|
+| Name | the name on the wall and in search. Empty goes back to the database's |
+| Artwork | title screen, in-game or box art; changing it fetches that kind |
+| Your own picture | a PNG or JPEG of your own for the tile, chosen in a file chooser |
+| Shader | none, or a CRT look (crt-royale, crt-geom, crt-lottes, …) from RetroArch's slang shaders |
+| Smoothing | sharp pixels or smoothed |
+| Shape | the game's own, 4:3, fill the screen, or square pixels |
+| Whole-number scaling | every pixel the same size, with a border round the picture |
+| Rotation | for a screen mounted on its side |
+| Controls for this game | any control changed for this game only; the rest stay the arcade's |
+
+Every row starts out following the arcade or RetroArch, and says so. `Delete`
+hands a row back. Only what you change is written, to
+`~/.config/omarchy/arcade-games/<rom>.cfg`, a RetroArch config that is loaded
+after the arcade's controls when the game starts. So a game's changes win for
+that game and nowhere else, and nothing reaches your everyday
+`retroarch.cfg`. The name goes to `arcade-titles.tsv`, like any title of your
+own.
+
+From a terminal:
+
+```bash
+arcade-launcher --game bublbobl                       # what is set, and where from
+arcade-launcher --game-set sf2 SHADER=crt/crt-royale.slangp b1=a b4=s
+arcade-launcher --game-set sf2 SHADER=                # back to RetroArch's
+arcade-launcher --game-image bublbobl ~/Pictures/bb.png
+```
 
 ## Adding games
 
@@ -200,9 +283,11 @@ controller RetroArch gives player 1, through unplugging and replugging.
 | Home | opens the panel; in a game, closes the game and opens it | closes it |
 | lever | moves; held, keeps moving | moves between rows; ← → change a choice |
 | B, Start | plays the selected game | changes a choice, starts the stick test |
-| A | clears the search, then closes | back to the wall |
+| A | clears the search, then the filters, then closes | back to the wall |
 | Y, X | the previous / next version of the game | |
 | L, R | a page up / down | |
+| ZL, ZR (L2, R2) | makes the selected game a favourite, or not | |
+| L3, R3 (stick clicks) | the next sort order / which games are shown | |
 | Minus (coin) | opens the settings | back to the wall |
 
 Buttons are RetroPad buttons, as RetroArch's profile names them, so this holds
@@ -325,7 +410,7 @@ in the environment for a single run. See
 | `ART_DIR` | `~/.cache/omarchy/arcade-art` |
 | `TILE_SIZE` | `300` — the width a game tile aims for, in pixels (overlay only) |
 | `MAX_COLUMNS` | `6` — most tiles in one row (overlay only) |
-| `RECENT_GAMES` | `6` — recently played games leading the wall, at most one row; `0` is off (overlay only) |
+| `SORT_BY` | `last played` — the wall's order: `last played`, `favourites`, `most played`, `name` or `year` (overlay only) |
 | `GROUP_VERSIONS` | `on` — one tile per game, `Tab` for its other versions; `off` shows each romset on its own (overlay only) |
 
 ### From the panel
@@ -356,7 +441,7 @@ the line rather than writing a default into it. The file remains the source of
 truth, so editing it by hand is still the same thing as editing it here — the
 panel re-reads it every time it opens.
 
-`TILE_SIZE`, `MAX_COLUMNS`, `RECENT_GAMES` and `GROUP_VERSIONS` are the overlay's own: the launcher does not use
+`TILE_SIZE`, `MAX_COLUMNS`, `SORT_BY` and `GROUP_VERSIONS` are the overlay's own: the launcher does not use
 them, but they live in the same file so there is one place arcade settings are
 kept and one editor for them. Changing any of them re-lays out the wall immediately.
 

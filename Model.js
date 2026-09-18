@@ -6,8 +6,8 @@
 // test.js.
 
 // "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing<TAB>database title
-// <TAB>year<TAB>maker" per line, exactly what --list prints; all but the first
-// two may be empty or absent. Lines without a
+// <TAB>year<TAB>maker<TAB>favourite<TAB>plays" per line, exactly what --list
+// prints; all but the first two may be empty or absent. Lines without a
 // tab are ignored rather than guessed at: a half-parsed row would launch the
 // wrong file.
 function parseList(text) {
@@ -24,13 +24,16 @@ function parseList(text) {
     if (!title.length || !path.length) continue
 
     var played = parseInt(parts[2] || "", 10)
+    var plays = parseInt(parts[8] || "", 10)
     games.push({
       title: title, path: path, rom: romName(path),
       lastPlayed: isNaN(played) ? 0 : played,
       playing: parts[3] === "playing",
       dbTitle: parts[4] || "",
       year: parts[5] || "",
-      maker: parts[6] || ""
+      maker: parts[6] || "",
+      favourite: parts[7] === "favourite",
+      plays: isNaN(plays) ? 0 : plays
     })
   }
   return games
@@ -127,6 +130,10 @@ function groupGames(games, picked) {
     var tile = {}
     for (var prop in rep) tile[prop] = rep[prop]
     tile.groupKey = order[g]
+    // A game is a favourite whichever of its versions was marked: that
+    // belongs to the game, not to the region it was marked in.
+    tile.favourite = false
+    for (var f = 0; f < versions.length; f++) if (versions[f].favourite) tile.favourite = true
     tile.versions = versions
     tile.versionIndex = versions.indexOf(rep)
     out.push(tile)
@@ -149,43 +156,197 @@ function versionCount(tile) {
   return tile && tile.versions ? tile.versions.length : 1
 }
 
-// The wall with nothing typed: the games you last played lead it, newest
-// first, then the whole library alphabetically. Capped at a row, so the
-// alphabet is never more than one row away -- and a recent game is not listed
-// twice, which would make arrowing past it feel like the wall stuttered.
-function wallGames(games, limit) {
-  var list = games || []
-  var cap = Math.max(0, limit | 0)
-  if (cap === 0) return list.slice()
+// ------------------------------------------------------ sorting and filters
+//
+// One wall, in whichever order was picked. With nothing typed it is "last
+// played" by default, so opening the panel and pressing Enter replays the
+// last game. The launcher lists the library alphabetically, so that order is
+// the tie-breaker everywhere and "name" is the list as it comes.
 
-  var played = []
-  for (var i = 0; i < list.length; i++) {
-    if (list[i].lastPlayed > 0) played.push({ order: i, game: list[i] })
-  }
-  played.sort(function(a, b) {
-    return b.game.lastPlayed !== a.game.lastPlayed ? b.game.lastPlayed - a.game.lastPlayed : a.order - b.order
-  })
-  played = played.slice(0, cap)
+var SORTS = [
+  { key: "last played", label: "Last played" },
+  { key: "favourites", label: "Favourites" },
+  { key: "most played", label: "Most played" },
+  { key: "name", label: "Name" },
+  { key: "year", label: "Year" }
+]
 
-  var lead = {}
-  var out = []
-  for (var j = 0; j < played.length; j++) {
-    lead[played[j].order] = true
-    out.push(played[j].game)
-  }
-  for (var k = 0; k < list.length; k++) {
-    if (!lead[k]) out.push(list[k])
-  }
-  return out
+function sortKeys() {
+  return SORTS.map(function(s) { return s.key })
 }
 
-// How many games lead the wall as recently played: the shelf above it.
-function recentCount(games, limit) {
-  var cap = Math.max(0, limit | 0)
-  var played = 0
+// An unknown sort -- a typo in arcade.conf -- is the default, not an error.
+function sortKey(value) {
+  var v = String(value || "").trim().toLowerCase()
+  return sortKeys().indexOf(v) >= 0 ? v : "last played"
+}
+
+function sortLabel(key) {
+  for (var i = 0; i < SORTS.length; i++) if (SORTS[i].key === key) return SORTS[i].label
+  return SORTS[0].label
+}
+
+// A tile stands for every version of its game: it was last played when any
+// of them was, and its plays are all of theirs.
+function latestPlay(game) {
+  if (!game) return 0
+  var versions = game.versions || [game]
+  var latest = 0
+  for (var i = 0; i < versions.length; i++) latest = Math.max(latest, versions[i].lastPlayed || 0)
+  return latest
+}
+
+function playCount(game) {
+  if (!game) return 0
+  var versions = game.versions || [game]
+  var n = 0
+  for (var i = 0; i < versions.length; i++) n += versions[i].plays || 0
+  return n
+}
+
+// "1987" and "1987?" are 1987; "198?" is known only to the decade.
+function yearOf(game) {
+  var m = /^(\d{4})/.exec(String(game && game.year || ""))
+  return m ? parseInt(m[1], 10) : 0
+}
+
+function decadeOf(game) {
+  var m = /^(\d{3})/.exec(String(game && game.year || ""))
+  return m ? m[1] + "0s" : ""
+}
+
+function sortGames(games, sort) {
+  var key = sortKey(sort)
+  var list = (games || []).map(function(game, order) { return { game: game, order: order } })
+  function compare(a, b) {
+    var ga = a.game, gb = b.game
+    if (key === "last played") {
+      var la = latestPlay(ga), lb = latestPlay(gb)
+      if (la !== lb) return lb - la
+    } else if (key === "favourites") {
+      var fa = isFavourite(ga) ? 0 : 1, fb = isFavourite(gb) ? 0 : 1
+      if (fa !== fb) return fa - fb
+    } else if (key === "most played") {
+      var pa = playCount(ga), pb = playCount(gb)
+      if (pa !== pb) return pb - pa
+      var ra = latestPlay(ga), rb = latestPlay(gb)
+      if (ra !== rb) return rb - ra
+    } else if (key === "year") {
+      // Oldest first, the way an arcade's history runs; no year at the end.
+      var ya = yearOf(ga) || (decadeOf(ga) ? parseInt(decadeOf(ga), 10) + 9.5 : 99999)
+      var yb = yearOf(gb) || (decadeOf(gb) ? parseInt(decadeOf(gb), 10) + 9.5 : 99999)
+      if (ya !== yb) return ya - yb
+    }
+    return a.order - b.order
+  }
+  list.sort(compare)
+  return list.map(function(e) { return e.game })
+}
+
+// The filters, each a chip that cycles: which games, which decade, which
+// maker. "" is "any" for the last two. Decades and makers are only the ones
+// the library actually has, so no choice ever shows an empty wall.
+var SHOWS = [
+  { key: "all", label: "All games" },
+  { key: "favourites", label: "Favourites" },
+  { key: "played", label: "Played" },
+  { key: "unplayed", label: "Never played" }
+]
+
+function showKeys() {
+  return SHOWS.map(function(s) { return s.key })
+}
+
+function showLabel(key) {
+  for (var i = 0; i < SHOWS.length; i++) if (SHOWS[i].key === key) return SHOWS[i].label
+  return SHOWS[0].label
+}
+
+function decadeOptions(games) {
+  var seen = {}
+  var out = []
   var list = games || []
-  for (var i = 0; i < list.length; i++) if (list[i].lastPlayed > 0) played++
-  return Math.min(cap, played)
+  for (var i = 0; i < list.length; i++) {
+    var d = decadeOf(list[i])
+    if (d && !seen[d]) { seen[d] = true; out.push(d) }
+  }
+  out.sort()
+  return [""].concat(out)
+}
+
+// Makers with the most games first: that is who you are likely looking for,
+// and the one-offs can wait at the end of the cycle.
+function makerOptions(games) {
+  var count = {}
+  var names = []
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    var m = String(list[i].maker || "")
+    if (!m) continue
+    if (!count[m]) { count[m] = 0; names.push(m) }
+    count[m]++
+  }
+  names.sort(function(a, b) { return count[b] !== count[a] ? count[b] - count[a] : (a.toLowerCase() < b.toLowerCase() ? -1 : 1) })
+  return [""].concat(names)
+}
+
+function matchesFilters(game, filters) {
+  var f = filters || ({})
+  if (f.show === "favourites" && !isFavourite(game)) return false
+  if (f.show === "played" && !latestPlay(game)) return false
+  if (f.show === "unplayed" && latestPlay(game)) return false
+  if (f.decade && decadeOf(game) !== f.decade) return false
+  if (f.maker && game.maker !== f.maker) return false
+  return true
+}
+
+function applyFilters(games, filters) {
+  return (games || []).filter(function(g) { return matchesFilters(g, filters) })
+}
+
+function filtersActive(filters) {
+  var f = filters || ({})
+  return !!((f.show && f.show !== "all") || f.decade || f.maker)
+}
+
+// The next value of one filter, as a new filters object. A filter whose
+// value is no longer offered (the last Konami game was removed) starts over.
+function stepFilter(filters, which, options, delta) {
+  var next = {}
+  for (var k in (filters || ({}))) next[k] = filters[k]
+  next[which] = cycleOption(options, next[which] === undefined ? options[0] : next[which], delta)
+  return next
+}
+
+// What the empty wall says when the filters leave nothing.
+function emptyNote(filters) {
+  var f = filters || ({})
+  if (f.show === "favourites" && !f.decade && !f.maker) return "No favourites yet. Alt+F on a game adds it."
+  if (f.show === "unplayed" && !f.decade && !f.maker) return "You have played every game here."
+  return "No games match these filters."
+}
+
+// Whether a game (or any version of a tile) is a favourite.
+function isFavourite(game) {
+  if (!game) return false
+  if (game.favourite) return true
+  var versions = game.versions || []
+  for (var i = 0; i < versions.length; i++) if (versions[i].favourite) return true
+  return false
+}
+
+// The launcher arguments that make a game a favourite or not. Taking it off
+// clears every version, since any one of them makes the tile a favourite;
+// adding it marks the version showing.
+function favouriteArgs(game) {
+  if (!game || !game.rom) return []
+  if (!isFavourite(game)) return ["--favourite", game.rom]
+  var roms = []
+  var versions = game.versions && game.versions.length ? game.versions : [game]
+  for (var i = 0; i < versions.length; i++) {
+    if (versions[i].favourite && roms.indexOf(versions[i].rom) < 0) roms.push(versions[i].rom)
+  }
+  return ["--unfavourite"].concat(roms)
 }
 
 // Where the selection goes. The first `recent` games sit on a shelf of their
@@ -231,28 +392,43 @@ function gameFacts(game, now) {
   if (game.year) facts.push(game.year)
   if (versionCount(game) > 1) facts.push(versionCount(game) + " versions")
   if (game.playing) facts.push("playing now")
-  else if (game.lastPlayed) facts.push("played " + playedAgo(game.lastPlayed, now))
+  else if (latestPlay(game)) facts.push("played " + playedAgo(latestPlay(game), now))
+  var plays = playCount(game)
+  if (plays) facts.push(plays === 1 ? "1 play" : plays + " plays")
   if (game.path) facts.push(String(game.path).replace(/^.*\//, ""))
   return facts.join("  ·  ")
 }
 
 // The controls at the foot of the wall, as keycaps and what they do. They
 // speak whichever was used last -- keyboard or stick -- and only mention
-// versions when the selected game has some.
-function wallHints(stick, versions) {
+// versions when the selected game has some. `favourite` is
+// { on, stickKey }: whether the selected game is a favourite, and the
+// stick's name for the button that makes it one ("" when it has none).
+function wallHints(stick, versions, favourite) {
+  var fav = favourite || ({})
+  var star = fav.on ? "Unfavourite" : "Favourite"
   if (stick) {
     var out = [{ keys: ["B"], label: "Play" }]
     if (versions) out.push({ keys: ["Y", "X"], label: "Version" })
+    if (fav.stickKey) out.push({ keys: [fav.stickKey], label: star })
     out.push({ keys: ["−"], label: "Settings" })
     out.push({ keys: ["Home"], label: "Close" })
     return out
   }
   var keys = [{ keys: ["Enter"], label: "Play" }]
   if (versions) keys.push({ keys: ["Tab"], label: "Version" })
+  if (favourite) keys.push({ keys: ["Alt", "F"], label: star })
+  if (favourite) keys.push({ keys: ["Alt", "E"], label: "Edit" })
   keys.push({ keys: ["Alt", "A"], label: "Add" })
   keys.push({ keys: ["Alt", "S"], label: "Settings" })
   keys.push({ keys: ["Esc"], label: "Close" })
   return keys
+}
+
+// The stick's name for the button that makes a game a favourite: the first of ZR/ZL
+// (RetroPad R2, L2) its profile binds, or "".
+function favouriteStickKey(controller) {
+  return padLabel(controller, "r2") || padLabel(controller, "l2")
 }
 
 // ------------------------------------------------------------ adding games
@@ -335,12 +511,17 @@ function playedAgo(epoch, now) {
 }
 
 // What the line under a tile says after the ROM name.
-function tileNote(game, now) {
+// It speaks to the order the wall is in: plays when sorted by them, the year
+// when sorted by that, otherwise when you last played it.
+function tileNote(game, now, sort) {
   if (!game) return ""
   var notes = []
+  var plays = playCount(game)
+  if (sort === "most played" && plays) notes.push(plays === 1 ? "1 play" : plays + " plays")
+  if (sort === "year" && game.year) notes.push(game.year)
   if (versionCount(game) > 1) notes.push((game.versionIndex + 1) + " of " + versionCount(game) + " versions")
   if (game.playing) notes.push("playing now")
-  else if (game.lastPlayed) notes.push(playedAgo(game.lastPlayed, now))
+  else if (latestPlay(game) && sort !== "most played" && sort !== "year") notes.push(playedAgo(latestPlay(game), now))
   return notes.join("  ·  ")
 }
 
@@ -562,8 +743,9 @@ function settingsSchema() {
       group: "Panel", help: "Most tiles the wall will put in one row." },
     { key: "GROUP_VERSIONS", label: "Versions", kind: "choice", options: ["on", "off"], group: "Panel",
       help: "“on” shows each game once, however many regional versions you have; Tab switches." },
-    { key: "RECENT_GAMES", label: "Recently played", kind: "number", min: 0, max: 12, step: 1,
-      group: "Panel", help: "How many recent games lead the wall, never more than a row. 0 turns it off." },
+    { key: "SORT_BY", label: "Sort by", kind: "choice", group: "Panel",
+      options: ["last played", "favourites", "most played", "name", "year"],
+      help: "The order of the wall. Alt+O on the wall changes it too." },
 
     { key: "TITLES_FILE", label: "Title overrides", kind: "path", group: "Files" },
     { key: "CACHE_FILE", label: "Title cache", kind: "path", group: "Files" },
@@ -646,7 +828,7 @@ function settingsRows(parsed) {
 // default or its autodetection, which the editor shows but does not pretend
 // was chosen.
 function isOverridden(row) {
-  return !!row && row.source === "file"
+  return !!row && (row.source === "file" || row.source === "game")
 }
 
 // The row's own bad news, ahead of anything else it has to say: a path that
@@ -660,6 +842,14 @@ function describeState(row) {
 
 function describeSource(row) {
   if (!row) return ""
+  if (row.game) {
+    if (row.kind === "image") return row.value ? "your own picture is on the tile" : ""
+    if (isOverridden(row)) return "set for this game only"
+    if (row.kind === "bind") return "the arcade's control, shared by every game"
+    if (row.key === "TITLE") return "the database's name"
+    if (row.key === "ART") return "the arcade's artwork order"
+    return "as RetroArch has it"
+  }
   if (row.kind === "padinfo") return row.status.text
   if (row.kind === "padtest") return ""
   if (row.source === "file") return row.kind === "bind" || row.layout ? "set for the arcade" : "set here"
@@ -673,6 +863,7 @@ function describeSource(row) {
 // ("autodetect"), an empty log path is just empty.
 function displayValue(row, home) {
   if (!row) return ""
+  if (row.labels) return row.labels[row.value] !== undefined ? row.labels[row.value] : row.value
   if (row.value) return shortenPath(row.value, home)
   if (row.kind === "number") return ""
   return row.key === "CORE_PATH" || row.key === "MENU_CMD" ? "autodetect" : "none"
@@ -1031,6 +1222,135 @@ function controlRows(parsed) {
   return rows
 }
 
+// ------------------------------------------------------------ one game
+//
+// A game's own settings, what `arcade-launcher --game ROM` prints: its title,
+// artwork, picture and the controls it changes. Everything not set for the
+// game follows the arcade (or RetroArch), and the editor says which.
+
+function parseGame(text) {
+  var out = { rom: "", file: "", present: false, values: ({}), options: ({}), binds: ({}) }
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var parts = lines[i].split("\t")
+    if (!parts[0]) continue
+    if (parts[0] === "GAME") { out.rom = parts[1] || ""; out.present = parts[2] === "present"; continue }
+    if (parts[0] === "GAME_FILE") { out.file = parts[1] || ""; continue }
+    if (parts[0] === "BIND" && parts.length >= 3) {
+      out.binds[parts[1]] = { key: parts[2], source: parts[3] || "shared" }
+      continue
+    }
+    if (parts[0].indexOf("OPTIONS_") === 0) {
+      out.options[parts[0].substring("OPTIONS_".length)] = parts.slice(1).filter(function(p) { return p.length > 0 })
+      continue
+    }
+    if (parts.length >= 2) out.values[parts[0]] = { value: parts[1], source: parts[2] || "default" }
+  }
+  return out
+}
+
+// "crt/crt-royale.slangp" as "crt-royale".
+function shaderLabel(path) {
+  return String(path || "").replace(/^.*\//, "").replace(/\.slangp$/, "")
+}
+
+function gameSchema() {
+  return [
+    { key: "TITLE", label: "Name", kind: "text", group: "Game",
+      help: "The name on the wall and in search. Empty goes back to the database's." },
+    { key: "ART", label: "Artwork", kind: "choice", group: "Artwork",
+      options: ["", "titles", "snaps", "boxarts"],
+      labels: { "": "as the arcade", titles: "title screen", snaps: "in-game", boxarts: "box art", custom: "your own picture" },
+      help: "Which picture the tile shows. Changing it fetches that kind." },
+    { key: "ART_IMAGE", label: "Your own picture", kind: "image", group: "Artwork",
+      labels: { "": "none", custom: "on the tile" },
+      help: "A PNG or JPEG of your own for the tile. Enter opens a file chooser." },
+    { key: "SHADER", label: "Shader", kind: "choice", group: "Picture", options: ["", "none"],
+      labels: { "": "as RetroArch", none: "none" },
+      help: "A look for the picture, a CRT's scanlines and glow for instance." },
+    { key: "SMOOTH", label: "Smoothing", kind: "choice", group: "Picture", options: ["", "sharp", "smooth"],
+      labels: { "": "as RetroArch", sharp: "sharp pixels", smooth: "smoothed" },
+      help: "Sharp keeps every pixel square; smoothed blurs them together." },
+    { key: "ASPECT", label: "Shape", kind: "choice", group: "Picture", options: ["", "core", "4:3", "full", "square"],
+      labels: { "": "as RetroArch", core: "the game's own", "4:3": "4:3", full: "fill the screen", square: "square pixels" },
+      help: "The shape of the picture. The game's own is what the cabinet showed." },
+    { key: "INTEGER", label: "Whole-number scaling", kind: "choice", group: "Picture", options: ["", "on", "off"],
+      labels: { "": "as RetroArch", on: "on", off: "off" },
+      help: "Scales only by whole numbers: every pixel the same size, with a border round the picture." },
+    { key: "ROTATE", label: "Rotation", kind: "choice", group: "Picture", options: ["", "0", "90", "180", "270"],
+      labels: { "": "as RetroArch", "0": "0°", "90": "90°", "180": "180°", "270": "270°" },
+      help: "Turns the picture, for a screen mounted on its side." }
+  ]
+}
+
+// The game's rows for the editor: its settings, then the controls, each
+// saying whether it is this game's own or the arcade's.
+function gameRows(parsed) {
+  var p = parsed || parseGame("")
+  var values = p.values || ({})
+  var rows = []
+  var schema = gameSchema()
+  for (var i = 0; i < schema.length; i++) {
+    var row = {}
+    for (var prop in schema[i]) row[prop] = schema[i][prop]
+    row.game = true
+    row.state = "ok"
+    row.allowEmpty = true
+    if (row.key === "ART_IMAGE") {
+      var art = values.ART ? values.ART.value : ""
+      row.value = art === "custom" ? "custom" : ""
+      row.source = row.value ? "game" : "default"
+    } else {
+      var known = values[row.key]
+      row.value = known ? String(known.value) : ""
+      row.source = known ? known.source : "default"
+    }
+    if (row.key === "SHADER") {
+      var offered = (p.options && p.options.SHADER) || []
+      var labels = { "": "as RetroArch", none: "none" }
+      for (var o = 0; o < offered.length; o++) {
+        if (row.options.indexOf(offered[o]) < 0) row.options.push(offered[o])
+        labels[offered[o]] = shaderLabel(offered[o])
+      }
+      if (row.value && !labels[row.value]) labels[row.value] = shaderLabel(row.value)
+      row.labels = labels
+    }
+    if (row.kind === "choice") {
+      row.options = row.options.slice()
+      if (row.value && row.options.indexOf(row.value) < 0) row.options.push(row.value)
+    }
+    rows.push(row)
+  }
+
+  var controls = controlsSchema()
+  for (var c = 0; c < controls.length; c++) {
+    var bind = {}
+    for (var cp in controls[c]) bind[cp] = controls[c][cp]
+    var b = (p.binds || ({}))[bind.id]
+    bind.kind = "bind"
+    bind.game = true
+    bind.key = bind.id
+    bind.group = bind.group === "Controls" ? "Controls for this game" : bind.group + " for this game"
+    bind.value = b ? String(b.key) : ""
+    bind.source = b && b.source === "game" ? "game" : "shared"
+    bind.state = "ok"
+    rows.push(bind)
+  }
+  return rows
+}
+
+// Which parts of the panel a game's write touches: its name is the wall's,
+// its artwork the tile's.
+function gameWriteEffects(keys) {
+  var out = { library: false, artwork: false }
+  var list = keys || []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] === "TITLE") out.library = true
+    if (list[i] === "ART" || list[i] === "ART_IMAGE") out.artwork = true
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- the stick
 //
 // What `arcade-launcher --controller` reports: the game controller RetroArch
@@ -1179,7 +1499,9 @@ function describePress(controller, kind, which, retropad) {
 
 // What a stick press does in the panel, by RetroPad button so it holds for
 // any controller RetroArch has a profile for. B and Start play, the way a
-// cabinet's Button 1 and Start do; A goes back, Home closes.
+// cabinet's Button 1 and Start do; A goes back, Home closes. L2 and R2 --
+// triggers no arcade game uses -- make a game a favourite, and the stick
+// clicks L3 and R3 step the sort order and which games are shown.
 //
 //   view "wall"      the games; "problem" when the launcher reported one
 //   view "settings"  the editor
@@ -1201,7 +1523,8 @@ function stickAction(retropad, view) {
   if (directions[retropad]) return directions[retropad]
   var wall = {
     b: "play", start: "play", a: "back", select: "settings", menu_toggle: "close",
-    y: "version-prev", x: "version-next", l: "page-up", r: "page-down"
+    y: "version-prev", x: "version-next", l: "page-up", r: "page-down",
+    l2: "favourite", r2: "favourite", l3: "sort", r3: "show"
   }
   return wall[retropad] || ""
 }
