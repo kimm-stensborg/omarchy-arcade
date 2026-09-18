@@ -284,9 +284,9 @@ Item {
     }
 
     if (!root.opened) {
-      // Home opens the arcade -- unless a game is running, where Home is
-      // RetroArch's own menu and the panel stays out of its way.
-      if (press.down && press.retropad === "menu_toggle" && !idleCheck.running) idleCheck.running = true
+      // Home is the way back to the arcade: out of the game if one is
+      // running, then the wall, ready for the next pick.
+      if (press.down && press.retropad === "menu_toggle" && !homeProc.running) homeProc.running = true
       return
     }
 
@@ -692,12 +692,14 @@ Item {
     onTriggered: stickProc.running = true
   }
 
-  // Whether a game is running, asked when Home is pressed with the panel shut.
+  // Home with the panel shut: close the game the launcher started, if any,
+  // then open the panel. 72 means a RetroArch started some other way is
+  // running; that one is not ours to close, so the panel stays shut.
   Process {
-    id: idleCheck
-    command: ["pgrep", "-x", "retroarch"]
+    id: homeProc
+    command: [root.launcher, "--stop"]
     onExited: function(exitCode) {
-      if (exitCode !== 0 && !root.opened) root.open("{}")
+      if ((exitCode === 0 || exitCode === 1) && !root.opened) root.open("{}")
     }
   }
 

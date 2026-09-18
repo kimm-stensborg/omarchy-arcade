@@ -167,6 +167,8 @@ check("Button 6 its L", M.controlPadLabel(PAD, "b6"), "L")
 check("coin is Minus", M.controlPadLabel(PAD, "coin1"), "Minus")
 check("directions are the lever", M.controlPadLabel(PAD, "up1"), "lever")
 check("player 2 is not on player 1's stick", M.controlPadLabel(PAD, "coin2"), "")
+check("Home is the stick's way out of a game", M.controlPadLabel(PAD, "exit"), "Home")
+check("and not RetroArch's menu any more", M.controlPadLabel(PAD, "menu"), "")
 
 check("never launched with it, it is ready but not confirmed", M.controllerStatus(PAD).state, "ready")
 const SEEN = Object.assign({}, PAD, { seen: [{ port: 1, name: "Nintendo Co., Ltd. Pro Controller" }] })
@@ -194,7 +196,7 @@ check("an analog stick is flagged",
       M.padEvent(pressed, PAD, "axis\t-0\t1").last.meaning, "not seen by arcade games")
 check("a button no profile binds says so",
       M.padEvent(pressed, PAD, "button\t4\t1").last.meaning, "not bound in RetroArch")
-check("Home opens RetroArch's menu", M.padEvent(pressed, PAD, "button\t11\t1").last.meaning, "RetroArch menu")
+check("Home takes you back to the arcade", M.padEvent(pressed, PAD, "button\t11\t1").last.meaning, "Back to the arcade")
 check("a garbled line changes nothing", M.padEvent(pressed, PAD, "nonsense"), null)
 
 check("a press is read as the RetroPad button it is", M.padPress(PAD, "button\t0\t1"),

@@ -147,7 +147,7 @@ controller RetroArch gives player 1, through unplugging and replugging.
 
 | Stick | On the wall | In the settings |
 |-------|-------------|-----------------|
-| Home | opens the panel (when no game is running); closes it | closes it |
+| Home | opens the panel; in a game, closes the game and opens it | closes it |
 | lever | moves; held, keeps moving | moves between rows; ← → change a choice |
 | B, Start | plays the selected game | changes a choice, starts the stick test |
 | A | clears the search, then closes | back to the wall |
@@ -156,11 +156,15 @@ controller RetroArch gives player 1, through unplugging and replugging.
 | Minus (coin) | opens the settings | back to the wall |
 
 Buttons are RetroPad buttons, as RetroArch's profile names them, so this holds
-for any controller RetroArch knows. With a game running, Home is RetroArch's own
-menu and the panel leaves it alone. Quit from that menu and Home opens the
-panel again. While the panel is open it takes the stick for itself (an
-exclusive grab), so a game running behind it does not also receive every
-press. The footer switches to the stick's hints whenever the stick was the last
+for any controller RetroArch knows. **Home is the way back:** in a game it
+closes the game (cleanly, so high scores are saved) and opens the panel, ready
+for the next pick. That means Home no longer opens RetroArch's own menu from
+the stick. RetroArch may show it for a split second as the game closes, and
+it is still on `F1` on the keyboard. A RetroArch you started some other way is
+never closed: Home leaves it and the panel alone.
+
+While the panel is open it takes the stick for itself (an exclusive grab), so
+a game running behind it does not also receive every press. The footer switches to the stick's hints whenever the stick was the last
 thing used.
 
 ## Search

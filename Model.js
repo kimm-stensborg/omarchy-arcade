@@ -904,7 +904,7 @@ function controlRows(parsed) {
 // is one player's.
 var CONTROL_RETROPAD = {
   coin1: "select", start1: "start", up1: "up", down1: "down", left1: "left", right1: "right",
-  b1: "b", b2: "a", b3: "y", b4: "x", b5: "r", b6: "l", menu: "menu_toggle"
+  b1: "b", b2: "a", b3: "y", b4: "x", b5: "r", b6: "l", exit: "menu_toggle"
 }
 
 // What a RetroPad button does in an FBNeo game: the Classic layout, and the
@@ -920,7 +920,7 @@ var RETROPAD_MEANING = {
   x: { control: "b4", name: "Button 4", fighter: "Medium Punch" },
   r: { control: "b5", name: "Button 5", fighter: "Heavy Kick" },
   l: { control: "b6", name: "Button 6", fighter: "Heavy Punch" },
-  menu_toggle: { control: "menu", name: "RetroArch menu" }
+  menu_toggle: { control: "exit", name: "Back to the arcade", note: "In a game, closes it and opens the panel." }
 }
 
 function parseController(text) {
@@ -1035,7 +1035,8 @@ function describePress(controller, kind, which, retropad) {
   }
   if (label === "lever") label = "Lever " + meaning.name.toLowerCase()
   return { label: label, meaning: meaning.name, control: meaning.control,
-           note: meaning.fighter ? "“" + meaning.fighter + "” in 3-punch, 3-kick fighters." : "", ok: true }
+           note: meaning.fighter ? "“" + meaning.fighter + "” in 3-punch, 3-kick fighters." : (meaning.note || ""),
+           ok: true }
 }
 
 // What a stick press does in the panel, by RetroPad button so it holds for

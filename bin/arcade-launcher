@@ -834,6 +834,8 @@ Usage:
   $PROGRAM --controls       Print "control<TAB>key<TAB>source" for the cabinet binds
   $PROGRAM --set-control ID=KEY
                             Bind one control, e.g. coin1=num5 (empty = unbind)
+  $PROGRAM --stop           Close the game this launcher started (1: none running,
+                            72: a RetroArch started some other way is left alone)
   $PROGRAM --controller     Print the game controller RetroArch will use, its
                             profile, and which of its buttons does what
   $PROGRAM --controller --follow
@@ -1300,6 +1302,23 @@ main() {
         set_control "${bind%%=*}" "${bind#*=}"
       done
       exit 0
+      ;;
+    --stop)
+      # The stick's way out of a game: close the one this launcher started,
+      # cleanly, so the panel can come back up. A RetroArch started some other
+      # way is not ours to close.
+      local running pid
+      running="$(running_game)"
+      if [[ -n "$running" ]]; then
+        pid="${running%%$'\t'*}"
+        # Forgotten first, so the launch watcher reads the closing as a
+        # choice rather than as a game that failed to start.
+        rm -f "$RUNNING_FILE"
+        stop_game "$pid"
+        exit 0
+      fi
+      pgrep -x -- "${RETROARCH_BIN##*/}" >/dev/null 2>&1 && exit "$EX_BUSY"
+      exit 1
       ;;
     --controller)
       local pad

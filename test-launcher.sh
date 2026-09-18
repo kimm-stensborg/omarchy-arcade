@@ -342,6 +342,19 @@ eventually 'grep -q "did not start" "$notes"'
 check "a crash on start is reported too" \
   "$(grep -c "crash did not start. RetroArch closed as soon as it started." "$notes")" "1"
 
+# Home on the stick, in a game: --stop.
+: >"$notes"
+"$launcher" other
+eventually '[[ "$(games_running)" == 1 ]]'
+"$launcher" --stop
+check "--stop closes the game the launcher started" "$?" "0"
+check "and it is gone" "$(games_running)" "0"
+check "and no longer the one playing" "$([[ -e "$XDG_RUNTIME_DIR/omarchy-arcade.running" ]] && echo yes || echo no)" "no"
+sleep 1
+check "a game closed on purpose is not reported as failing" "$(grep -c "did not start" "$notes")" "0"
+"$launcher" --stop
+check "with nothing running it says so" "$?" "1"
+
 sed -i '/^config_save_on_exit/d' "$profile"
 "$launcher" crash 2>/dev/null
 check "a hand edit that dropped the save guard gets it back before a launch" \
@@ -358,6 +371,9 @@ eventually '[[ "$(games_running)" == 1 ]]'
 check "a RetroArch the launcher did not start is refused" "$?" "72"
 check "and left running" "$(kill -0 "$mine" 2>/dev/null && echo alive)" "alive"
 check "with a reason on the desktop" "$(grep -c "RetroArch is already running" "$notes")" "1"
+"$launcher" --stop
+check "--stop leaves it alone too, and says why" "$?" "72"
+check "still running" "$(kill -0 "$mine" 2>/dev/null && echo alive)" "alive"
 kill "$mine" 2>/dev/null
 
 printf '\n'
