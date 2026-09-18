@@ -84,7 +84,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `PgUp` `PgDn`, `Home` `End` | jump |
 | `Enter` | launch the selected game, or return to it if it is running |
 | `Tab` `Shift+Tab` | another version of the selected game |
-| `Ctrl+O` | add games: pick romsets in a file chooser (`+` in the header for a drop zone) |
+| `Alt+A` | add games: pick romsets in a file chooser (or `+` in the header) |
 | `F5` | re-read the ROM directory |
 | `Ctrl+,` | open the settings, controls included |
 | `Esc` | close |
@@ -154,22 +154,16 @@ guess would close a game that was about to start.
 
 Two ways in, and both take as many files as you like at once:
 
-- **`Ctrl+O` opens a file chooser**: your desktop's own, multi-select,
-  filtered to `.zip`, `.7z` and `.chd`, and opening in the folder you picked
-  from last time (the download folder the first time).
-- **`+` in the header steps the panel aside.** All that is left is a drop zone
-  in the bottom-right corner, and the keyboard and mouse are your desktop's
-  again. Drag romsets from your file manager onto the zone, a whole folder
-  included (the romsets in it, not its subfolders). The zone's **Browse
-  files…** button opens the same chooser.
+- **`+` in the header, or `Alt+A`, opens a file chooser**: your desktop's
+  own, multi-select, filtered to `.zip`, `.7z` and `.chd`, and opening in the
+  folder you picked from last time (the download folder the first time). The
+  panel hides while it is open, so the chooser has the screen and the
+  keyboard, and comes back with the result, or as it was if you cancel.
+- **Drop files anywhere on the panel**, from a file manager on another monitor
+  for instance, a whole folder included (the romsets in it, not its
+  subfolders).
 
-The panel comes back with the result as soon as you drop or choose, counting
-through a big batch in the info bar ("Checking pang.zip (3 of 12)…"). The `✕`
-on the zone, or A or Home on the stick, brings it back without adding
-anything.
-
-The full panel covers the screen and holds the keyboard. That is right for
-choosing a game, but it leaves no file manager to drag from, hence the zone.
+A big batch counts through in the info bar ("Checking pang.zip (3 of 12)…").
 
 Each file is copied into `ROM_DIR` and then **test-loaded**: RetroArch runs the
 core for two frames with no window and no sound, and the same log lines that

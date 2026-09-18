@@ -1463,8 +1463,26 @@ main() {
         die 1 "no file chooser: install zenity ($(package_command) zenity)"
       local filter="Romsets |"
       for ext in $ROM_EXTS; do filter+=" *.${ext,,} *.${ext^^}"; done
-      chosen="$(zenity --file-selection --multiple --separator=$'\n' --title="Add games to the arcade" \
-        --filename="$start/" --file-filter="$filter" --file-filter="All files | *" 2>/dev/null)" || exit 1
+      local picked chooser tries
+      picked="$(mktemp)"
+      zenity --file-selection --multiple --separator=$'\n' --title="Add games to the arcade" \
+        --filename="$start/" --file-filter="$filter" --file-filter="All files | *" >"$picked" 2>/dev/null &
+      chooser=$!
+      # The chooser opens as the panel hides, and the keyboard follows the
+      # panel back to whatever had it before. Hand it to the chooser instead,
+      # once its window is there.
+      if command -v hyprctl >/dev/null 2>&1; then
+        for tries in 1 2 3 4 5 6 7 8 9 10; do
+          sleep 0.2
+          hyprctl clients 2>/dev/null | grep -q 'title: Add games to the arcade' || continue
+          sleep 0.2
+          hyprctl dispatch 'hl.dsp.focus({ window = "title:^Add games to the arcade$" })' >/dev/null 2>&1 || true
+          break
+        done
+      fi
+      wait "$chooser" || { rm -f -- "$picked"; exit 1; }
+      chosen="$(cat -- "$picked")"
+      rm -f -- "$picked"
       [[ -n "$chosen" ]] || exit 1
       mkdir -p "${last_dir_file%/*}" && printf '%s\n' "$(dirname -- "$(head -n1 <<<"$chosen")")" >"$last_dir_file"
       printf '%s\n' "$chosen"

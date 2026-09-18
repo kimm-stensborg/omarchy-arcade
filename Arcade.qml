@@ -54,15 +54,8 @@ Item {
   property bool addOk: true
   // The first game a drop added, to be selected once the list has it.
   property string pendingSelectRom: ""
-  // The panel stepped aside: only a drop zone in the corner is left, and the
-  // keyboard and pointer are the desktop's again, so romsets can be dragged
-  // out of a file manager. The full panel covers the screen and holds the
-  // keyboard, which leaves nothing to drag from.
-  property bool dropMode: false
   // Everything --add has said so far, summed up when it finishes.
   property string addOutput: ""
-  // Why the file chooser could not open, shown on the drop zone.
-  property string pickError: ""
 
   // ---- settings
   // Everything the panel can be told is a key in arcade.conf, read back from
@@ -219,7 +212,6 @@ Item {
   }
 
   function close() {
-    root.dropMode = false
     root.stopPadTest()
     root.stopStickRepeat()
     root.flushSettings()
@@ -325,11 +317,6 @@ Item {
 
     var action = Model.stickAction(press.retropad, root.stickView)
     if (!action) return
-    // The drop zone is for the mouse; the stick can only put the panel back.
-    if (root.dropMode) {
-      if (press.down && (action === "back" || action === "close")) root.leaveDropMode()
-      return
-    }
     if (!press.down) {
       if (stickRepeat.action === action) root.stopStickRepeat()
       return
@@ -611,26 +598,15 @@ Item {
   // Romsets dropped on the panel: copied into the ROM directory, each one
   // test-loaded headless, kept only if it runs, artwork fetched. The launcher
   // does all of it; the panel says what happened and goes to the new game.
-  function enterDropMode() {
-    if (root.settingsOpen) root.closeSettings()
-    root.stopStickRepeat()
-    root.dropHover = false
-    root.pickError = ""
-    root.dropMode = true
-  }
-
-  // The file chooser, for romsets that are easier picked than dragged. The
-  // panel has already stepped aside, so the chooser is not hidden behind it.
+  // The file chooser, for adding romsets: + in the header, or Alt+A. The
+  // panel hides while it is open -- it covers the screen and holds the
+  // keyboard, so the chooser would otherwise open behind it -- and comes back
+  // with the result, or as it was if the choosing was cancelled.
   function pickGames() {
     if (pickProc.running || addProc.running) return
-    root.pickError = ""
+    if (root.settingsOpen) root.closeSettings()
+    root.stopStickRepeat()
     pickProc.running = true
-  }
-
-  function leaveDropMode() {
-    root.dropMode = false
-    root.dropHover = false
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function addGames(paths) {
@@ -789,14 +765,15 @@ Item {
       waitForEnd: true
     }
     onExited: function(exitCode) {
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
       if (exitCode === 0) {
-        var paths = pickOut.text.split("\n").filter(function(p) { return p.length > 0 })
-        root.leaveDropMode()
-        root.addGames(paths)
+        root.addGames(pickOut.text.split("\n").filter(function(p) { return p.length > 0 }))
       } else if (pickErr.text && pickErr.text.trim()) {
-        root.pickError = pickErr.text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+        // No chooser to open: say so where the result would have gone.
+        root.statusMessage = "Could not open a file chooser"
+        root.addNote = pickErr.text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+        root.addOk = false
       }
-      // Cancelled: the zone stays, ready for a drop or another browse.
     }
   }
 
@@ -1112,21 +1089,14 @@ Item {
 
   PanelWindow {
     id: panel
-    visible: root.opened
+    // Hidden, not closed, while the file chooser is open.
+    visible: root.opened && !pickProc.running
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-arcade"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.dropMode ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
-    // Stepped aside, the panel takes input only on its drop zone; clicks and
-    // drags anywhere else reach the desktop underneath.
-    mask: Region { item: root.dropMode ? dropZone : wholeScreen }
-
-    Item {
-      id: wholeScreen
-      anchors.fill: parent
-    }
 
     // The selected game's title screen, blurred across the whole screen and
     // pushed well back: the room lit by the cabinet you are standing at.
@@ -1142,7 +1112,6 @@ Item {
     }
 
     MultiEffect {
-      visible: !root.dropMode
       anchors.fill: parent
       source: backdropArt
       autoPaddingEnabled: false
@@ -1156,27 +1125,23 @@ Item {
     }
 
     Rectangle {
-      visible: !root.dropMode
       anchors.fill: parent
       color: root.scrim
     }
 
     // The scrim alone lets the desktop through; the arcade wants the room dark.
     Rectangle {
-      visible: !root.dropMode
       anchors.fill: parent
       color: Util.alpha("#000000", 0.45)
     }
 
     MouseArea {
-      visible: !root.dropMode
       anchors.fill: parent
       onClicked: root.close()
     }
 
     BorderSurface {
       id: card
-      visible: !root.dropMode
       width: root.cardWidth
       height: root.cardHeight
       radius: root.cornerRadius
@@ -1218,11 +1183,8 @@ Item {
             event.accepted = true
             return
           }
-          // Ctrl+O opens the file chooser. The panel steps aside to its drop
-          // zone at the same time -- the zone cannot hold the keyboard, so the
-          // shortcut lives here -- and a drag works just as well meanwhile.
-          if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_O) {
-            root.enterDropMode()
+          // Alt+A adds games: the file chooser.
+          if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
             root.pickGames()
             event.accepted = true
             return
@@ -1385,7 +1347,8 @@ Item {
               elide: Text.ElideMiddle
             }
 
-            // Adding games: the panel steps aside to a drop zone.
+            // Adding games: the file chooser. (Dropping files anywhere on the
+            // panel works too.)
             Rectangle {
               id: addButton
               visible: !root.settingsOpen
@@ -1412,7 +1375,7 @@ Item {
                 id: addArea
                 anchors.fill: parent
                 hoverEnabled: true
-                onClicked: root.enterDropMode()
+                onClicked: root.pickGames()
               }
             }
 
@@ -1608,7 +1571,7 @@ Item {
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 textFormat: Text.PlainText
-                text: root.games.length === 0 ? "Drop romsets here, or put them in your ROM directory and press F5"
+                text: root.games.length === 0 ? "Press + (Alt+A) to add romsets, or drop them here"
                                               : "Backspace to widen the search"
                 color: root.foreground
                 opacity: 0.4
@@ -2115,7 +2078,7 @@ Item {
     Rectangle {
       anchors.fill: card
       radius: card.radius
-      visible: root.dropHover && !root.dropMode
+      visible: root.dropHover
       color: Util.alpha(root.background, 0.92)
       border.width: Math.max(2, Style.space(3))
       border.color: root.accent
@@ -2165,127 +2128,10 @@ Item {
         root.dropHover = false
         if (!drop.hasUrls) return
         drop.accept(Qt.CopyAction)
-        if (root.dropMode) root.leaveDropMode()
         root.addGames(Model.droppedPaths(drop.urls))
       }
     }
 
-    // ---- the drop zone, when the panel has stepped aside
-    Rectangle {
-      id: dropZone
-      visible: root.dropMode
-      anchors.right: parent.right
-      anchors.bottom: parent.bottom
-      anchors.margins: Style.gapsOut * 2
-      width: Style.space(480)
-      height: Style.space(340)
-      radius: root.cornerRadius * 2
-      color: root.dropHover ? Util.alpha(root.accent, 0.22) : root.background
-      border.width: Math.max(2, Style.space(3))
-      border.color: root.dropHover ? root.accent : Util.alpha(root.accent, 0.55)
-      Behavior on color { ColorAnimation { duration: 120 } }
-
-      Column {
-        anchors.centerIn: parent
-        width: parent.width - Style.space(48)
-        spacing: Style.space(8)
-
-        Text {
-          anchors.horizontalCenter: parent.horizontalCenter
-          textFormat: Text.PlainText
-          text: "󰇚"
-          color: root.accent
-          font.family: root.fontFamily
-          font.pixelSize: Math.round(Style.font.title * 2.6)
-        }
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignHCenter
-          textFormat: Text.PlainText
-          text: root.dropHover ? "Let go to add them" : "Drop romsets here"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Math.round(Style.font.title * 1.3)
-          font.bold: true
-        }
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignHCenter
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          text: root.pickError
-            || "Drag them from your file manager, as many as you like, or a whole folder. Each one is test-loaded; only games that run go in."
-          color: root.pickError ? root.accent : root.foreground
-          opacity: root.pickError ? 1 : 0.55
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        Item { width: 1; height: Style.space(4) }
-
-        // Or pick them: the file chooser, several at once.
-        Rectangle {
-          anchors.horizontalCenter: parent.horizontalCenter
-          height: Style.font.body + Style.space(18)
-          width: browseRow.implicitWidth + Style.space(28)
-          radius: height / 2
-          color: browseArea.containsMouse || pickProc.running
-            ? Util.alpha(root.accent, 0.28) : Util.alpha(root.accent, 0.14)
-          border.width: Math.max(1, Style.space(1))
-          border.color: Util.alpha(root.accent, 0.6)
-
-          Row {
-            id: browseRow
-            anchors.centerIn: parent
-            spacing: Style.space(10)
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              textFormat: Text.PlainText
-              text: pickProc.running ? "Choosing…" : "󰉋  Browse files…"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              font.bold: true
-            }
-          }
-
-          MouseArea {
-            id: browseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: root.pickGames()
-          }
-        }
-      }
-
-      // Back to the panel without adding anything.
-      Rectangle {
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: Style.space(10)
-        width: Style.space(34)
-        height: width
-        radius: width / 2
-        color: cancelArea.containsMouse ? Util.alpha(root.accent, 0.2) : Util.alpha(root.foreground, 0.08)
-
-        Text {
-          anchors.centerIn: parent
-          textFormat: Text.PlainText
-          text: "󰅖"
-          color: cancelArea.containsMouse ? root.accent : root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-        }
-
-        MouseArea {
-          id: cancelArea
-          anchors.fill: parent
-          hoverEnabled: true
-          onClicked: root.leaveDropMode()
-        }
-      }
-    }
   }
 
   // ------------------------------------------------------------- dropping
