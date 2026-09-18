@@ -197,6 +197,24 @@ check("a button no profile binds says so",
 check("Home opens RetroArch's menu", M.padEvent(pressed, PAD, "button\t11\t1").last.meaning, "RetroArch menu")
 check("a garbled line changes nothing", M.padEvent(pressed, PAD, "nonsense"), null)
 
+check("a press is read as the RetroPad button it is", M.padPress(PAD, "button\t0\t1"),
+      { kind: "button", which: "0", down: true, retropad: "b" })
+check("B plays", M.stickAction("b", "wall"), "play")
+check("so does Start", M.stickAction("start", "wall"), "play")
+check("the lever moves", M.stickAction("left", "wall"), "left")
+check("Y and X step through versions", [M.stickAction("y", "wall"), M.stickAction("x", "wall")],
+      ["version-prev", "version-next"])
+check("L and R page", [M.stickAction("l", "wall"), M.stickAction("r", "wall")], ["page-up", "page-down"])
+check("A goes back", M.stickAction("a", "wall"), "back")
+check("Home closes", M.stickAction("menu_toggle", "wall"), "close")
+check("coin opens the settings", M.stickAction("select", "wall"), "settings")
+check("in the settings B changes a row", M.stickAction("b", "settings"), "activate")
+check("and A leaves them", M.stickAction("a", "settings"), "back")
+check("with a problem showing, B re-checks", M.stickAction("b", "problem"), "recheck")
+check("buttons with no job do nothing", M.stickAction("l2", "wall"), "")
+check("a held lever repeats", M.stickRepeats("down"), true)
+check("a held B does not", M.stickRepeats("play"), false)
+
 const padRows = M.controllerRows(PAD)
 check("the editor names the profile the stick is known by", padRows[0].value, "Nintendo Switch Pro Controller")
 check("and says whether it will work", M.describeSource(padRows[0]),

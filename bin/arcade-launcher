@@ -836,6 +836,8 @@ Usage:
                             Bind one control, e.g. coin1=num5 (empty = unbind)
   $PROGRAM --controller     Print the game controller RetroArch will use, its
                             profile, and which of its buttons does what
+  $PROGRAM --controller --follow
+                            Stream its presses, through unplugging and replugging
   $PROGRAM --controls-preset mame|retroarch
                             Write a whole control layout
   $PROGRAM --help           Show this help
@@ -1305,6 +1307,8 @@ main() {
       [[ -n "$pad" ]] || die 1 "arcade-pad not found"
       local -a pad_args=(--append "$CONTROLS_FILE" --log "$LOG_FILE")
       [[ -r "$(base_config)" ]] && pad_args+=(--config "$(base_config)")
+      shift
+      [[ "${1-}" == --follow ]] && pad_args+=(--follow)
       exec "$pad" "${pad_args[@]}"
       ;;
     --controls-preset)

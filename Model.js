@@ -980,7 +980,10 @@ function controllerStatus(controller) {
 
 // One line from `arcade-pad --watch` applied to the test's state: which
 // RetroPad buttons are held, and what the last press was.
-function padEvent(state, controller, line) {
+// A press line from arcade-pad, as the RetroPad button RetroArch's profile
+// makes of it: { kind, which, down, retropad }, retropad "" when the profile
+// binds nothing there. Null for anything that is not a press line.
+function padPress(controller, line) {
   var parts = String(line || "").split("\t")
   if (parts.length < 3) return null
   var kind = parts[0], which = parts[1], down = parts[2] === "1"
@@ -993,6 +996,13 @@ function padEvent(state, controller, line) {
   for (var key in binds) {
     if (binds[key].spec === spec) { retropad = key; break }
   }
+  return { kind: kind, which: which, down: down, retropad: retropad }
+}
+
+function padEvent(state, controller, line) {
+  var press = padPress(controller, line)
+  if (!press) return null
+  var kind = press.kind, which = press.which, down = press.down, retropad = press.retropad
 
   var held = {}
   for (var h in (state && state.held) || ({})) held[h] = state.held[h]
@@ -1026,6 +1036,47 @@ function describePress(controller, kind, which, retropad) {
   if (label === "lever") label = "Lever " + meaning.name.toLowerCase()
   return { label: label, meaning: meaning.name, control: meaning.control,
            note: meaning.fighter ? "“" + meaning.fighter + "” in 3-punch, 3-kick fighters." : "", ok: true }
+}
+
+// What a stick press does in the panel, by RetroPad button so it holds for
+// any controller RetroArch has a profile for. B and Start play, the way a
+// cabinet's Button 1 and Start do; A goes back, Home closes.
+//
+//   view "wall"      the games; "problem" when the launcher reported one
+//   view "settings"  the editor
+function stickAction(retropad, view) {
+  var directions = { up: "up", down: "down", left: "left", right: "right" }
+  if (view === "settings") {
+    if (directions[retropad]) return directions[retropad]
+    if (retropad === "b" || retropad === "start") return "activate"
+    if (retropad === "a" || retropad === "select") return "back"
+    if (retropad === "menu_toggle") return "close"
+    return ""
+  }
+  if (view === "problem") {
+    if (retropad === "b" || retropad === "start") return "recheck"
+    if (retropad === "a" || retropad === "menu_toggle") return "close"
+    if (retropad === "select") return "settings"
+    return ""
+  }
+  if (directions[retropad]) return directions[retropad]
+  var wall = {
+    b: "play", start: "play", a: "back", select: "settings", menu_toggle: "close",
+    y: "version-prev", x: "version-next", l: "page-up", r: "page-down"
+  }
+  return wall[retropad] || ""
+}
+
+// Held down, these keep going: a lever held right runs along the wall.
+function stickRepeats(action) {
+  return ["up", "down", "left", "right", "page-up", "page-down"].indexOf(action) >= 0
+}
+
+// The footer's word on the stick, when one is plugged in.
+function stickHint(view) {
+  if (view === "settings") return "stick: B changes · A goes back"
+  if (view === "problem") return "stick: B re-checks · Home closes"
+  return "stick: B plays · Y X versions\nA back · Home closes"
 }
 
 // The editor's Controller section: what is plugged in and whether it will

@@ -129,8 +129,21 @@ Item {
   // The live test: presses read straight off the device, numbered the way
   // RetroArch numbers them and looked up in the same profile.
   property bool padTesting: false
+  // Which view the stick is driving, and whether it was the last thing used:
+  // the footer then speaks stick rather than keyboard.
+  readonly property string stickView: root.settingsOpen ? "settings" : (root.hasProblem ? "problem" : "wall")
+  property bool stickLast: false
+  // While the panel is up it has the stick to itself, so a game running
+  // behind it does not also take every press.
+  onOpenedChanged: {
+    if (stickProc.running) stickProc.write(root.opened ? "grab\n" : "release\n")
+    if (!root.opened) root.stickLast = false
+  }
+  Component.onCompleted: {
+    controllerProc.running = true
+    stickProc.running = true
+  }
   property var padState: ({ held: ({}), last: null, presses: 0 })
-  readonly property string padTool: root.pluginDir + "/bin/arcade-pad"
   readonly property var settingsRow: root.settingsIndex >= 0 && root.settingsIndex < root.settingsRows.length
     ? root.settingsRows[root.settingsIndex]
     : null
@@ -175,6 +188,7 @@ Item {
 
   function close() {
     root.stopPadTest()
+    root.stopStickRepeat()
     root.flushSettings()
     root.opened = false
   }
@@ -229,15 +243,112 @@ Item {
     var pad = root.controllerParsed.pad
     if (!pad) { root.settingsError = "no controller connected"; return }
     root.cancelEdit()
+    root.stopStickRepeat()
     root.padState = ({ held: ({}), last: null, presses: 0 })
-    padWatch.command = [root.padTool, "--watch", pad.device]
-    padWatch.running = true
     root.padTesting = true
   }
 
   function stopPadTest() {
-    padWatch.running = false
+    testExitTimer.stop()
     root.padTesting = false
+  }
+
+  // ------------------------------------------------------------ the stick
+
+  // One line from the stick listener. The listener runs for as long as the
+  // shell does -- the plugin stays loaded -- so the stick can open the panel
+  // as well as work it.
+  function stickLine(line) {
+    if (line.indexOf("device\t") === 0 || line === "gone") {
+      // Plugged in or out: what the panel knows about it is stale either way.
+      root.stopStickRepeat()
+      if (!controllerProc.running) controllerProc.running = true
+      if (root.opened && line !== "gone") stickProc.write("grab\n")
+      if (line === "gone" && root.padTesting) root.stopPadTest()
+      return
+    }
+
+    var press = Model.padPress(root.controllerParsed, line)
+    if (!press) return
+
+    if (root.padTesting) {
+      var next = Model.padEvent(root.padState, root.controllerParsed, line)
+      if (next) root.padState = next
+      // Home is being tested like any button, so a tap only shows what it
+      // does; held, it ends the test.
+      if (press.retropad === "menu_toggle") {
+        if (press.down) testExitTimer.restart()
+        else testExitTimer.stop()
+      }
+      return
+    }
+
+    if (!root.opened) {
+      // Home opens the arcade -- unless a game is running, where Home is
+      // RetroArch's own menu and the panel stays out of its way.
+      if (press.down && press.retropad === "menu_toggle" && !idleCheck.running) idleCheck.running = true
+      return
+    }
+
+    var action = Model.stickAction(press.retropad, root.stickView)
+    if (!action) return
+    if (!press.down) {
+      if (stickRepeat.action === action) root.stopStickRepeat()
+      return
+    }
+    root.stickLast = true
+    root.stickAction(action)
+    if (Model.stickRepeats(action)) {
+      stickRepeat.action = action
+      stickRepeat.interval = 380
+      stickRepeat.restart()
+    }
+  }
+
+  function stopStickRepeat() {
+    stickRepeat.stop()
+    stickRepeat.action = ""
+  }
+
+  function stickAction(action) {
+    var view = root.stickView
+    // Half-typed text belongs to the keyboard; the stick can only let go of it.
+    if (root.editing || root.capturing) {
+      if (action === "back" || action === "close") root.cancelEdit()
+      return
+    }
+    if (action === "close") { root.close(); return }
+    if (view === "settings") {
+      var row = root.settingsRow
+      if (action === "up") root.moveSetting(-1)
+      else if (action === "down") root.moveSetting(1)
+      else if (action === "left") root.stepSetting(-1)
+      else if (action === "right") root.stepSetting(1)
+      else if (action === "back") root.closeSettings()
+      else if (action === "activate" && row) {
+        if (row.kind === "choice") root.stepSetting(1)
+        else if (row.kind === "padtest") root.startPadTest()
+      }
+      return
+    }
+    if (action === "settings") { root.openSettings(); return }
+    if (action === "recheck") { root.refresh(); return }
+    if (action === "back") {
+      if (root.filterText) root.setFilter("")
+      else root.close()
+      return
+    }
+    if (action === "play") { root.activate(); return }
+    if (action === "left") root.moveBy(-1)
+    else if (action === "right") root.moveBy(1)
+    else if (action === "up") root.moveBy(-root.columns)
+    else if (action === "down") root.moveBy(root.columns)
+    else if (action === "page-up") root.moveBy(-root.columns * 2)
+    else if (action === "page-down") root.moveBy(root.columns * 2)
+    else if ((action === "version-prev" || action === "version-next")
+             && root.selected && Model.versionCount(root.selected) > 1)
+      root.pickedVersions = Model.stepVersion(root.pickedVersions, root.selected,
+                                              action === "version-prev" ? -1 : 1)
   }
 
   function closeSettings() {
@@ -556,20 +667,57 @@ Item {
     }
   }
 
+  // The stick, followed through unplugging and replugging for as long as the
+  // shell runs. "grab" and "release" go the other way, on its stdin.
   Process {
-    id: padWatch
+    id: stickProc
+    command: [root.launcher, "--controller", "--follow"]
+    stdinEnabled: true
     stdout: SplitParser {
-      onRead: function(line) {
-        var next = Model.padEvent(root.padState, root.controllerParsed, line)
-        if (next) root.padState = next
-      }
+      onRead: function(line) { root.stickLine(line) }
     }
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text && text.trim().length > 0) root.settingsError = text.trim()
+      onStreamFinished: if (text && text.trim().length > 0) console.warn(root.pluginId + ":", text.trim())
     }
-    // Unplugged mid-test: the device is gone, so is the test.
-    onExited: if (root.padTesting) { root.padTesting = false; root.loadSettings() }
+    onRunningChanged: if (running && root.opened) Qt.callLater(function() { stickProc.write("grab\n") })
+    // It only ends if something went wrong; try again shortly rather than
+    // leave the stick dead until the shell restarts.
+    onExited: stickRestart.restart()
+  }
+
+  Timer {
+    id: stickRestart
+    interval: 3000
+    onTriggered: stickProc.running = true
+  }
+
+  // Whether a game is running, asked when Home is pressed with the panel shut.
+  Process {
+    id: idleCheck
+    command: ["pgrep", "-x", "retroarch"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && !root.opened) root.open("{}")
+    }
+  }
+
+  // A held lever keeps moving: a pause, then a steady step.
+  Timer {
+    id: stickRepeat
+    property string action: ""
+    interval: 380
+    repeat: true
+    onTriggered: {
+      stickRepeat.interval = 90
+      if (stickRepeat.action) root.stickAction(stickRepeat.action)
+    }
+  }
+
+  // Home held for most of a second ends the controller test.
+  Timer {
+    id: testExitTimer
+    interval: 900
+    onTriggered: root.stopPadTest()
   }
 
   Process {
@@ -691,6 +839,7 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          root.stickLast = false
           // The test owns the keyboard while it runs: the stick is what is
           // being tested, and Esc is the way back.
           if (root.padTesting) {
@@ -1541,7 +1690,9 @@ Item {
               width: Math.min(implicitWidth, parent.width * 0.42)
               horizontalAlignment: Text.AlignRight
               text: root.padTesting
-                ? "press buttons on the stick\nEsc ends the test"
+                ? "press buttons on the stick\nEsc or hold Home ends the test"
+                : root.stickLast && root.controllerParsed.pad && !root.editing && !root.capturing
+                ? Model.stickHint(root.stickView)
                 : root.settingsOpen
                 ? (root.capturing
                    ? "press a key · Esc cancels"

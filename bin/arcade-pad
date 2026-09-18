@@ -12,6 +12,14 @@
     hat<TAB>up<TAB>1
     axis<TAB>+0<TAB>1               (past half way, and back)
 
+    arcade-pad --follow [--config ...] [--append ...]
+    device<TAB>/dev/input/eventN<TAB>name    (player 1's stick, as it comes)
+    gone                                     (and goes)
+    ...and the same press lines as --watch in between. It keeps following
+    through unplugging and replugging. "grab" on stdin takes the stick
+    exclusively -- nothing else, a game included, sees its presses -- and
+    "release" hands it back; end of stdin ends it.
+
 Everything is numbered the way RetroArch's udev joypad driver numbers it, so a
 press read here is looked up in the same autoconfig profile RetroArch uses and
 means the same thing it will mean in a game. Nothing here needs root: the
@@ -28,6 +36,8 @@ import struct
 import sys
 
 EV_KEY, EV_ABS = 0x01, 0x03
+EVIOCGRAB = (1 << 30) | (4 << 16) | (ord("E") << 8) | 0x90  # _IOW('E', 0x90, int)
+EVENT = struct.Struct("llHHi")
 BTN_MISC, BTN_JOYSTICK, KEY_MAX = 0x100, 0x120, 0x2FF
 ABS_HAT0X, ABS_HAT3Y, ABS_MISC, ABS_MAX = 0x10, 0x17, 0x28, 0x3F
 
@@ -166,24 +176,30 @@ def last_seen(log):
     return re.findall(r"\[Autoconf\] (.*) configured in port (\d+)", chunk)
 
 
+def settings(args):
+    merged = read_cfg(args.config) if args.config else {}
+    merged.update(read_cfg(args.append) if args.append else {})
+    return merged
+
+
+def player_one(merged):
+    """The controller RetroArch gives player 1: the one at its joypad index."""
+    found = pads()
+    try:
+        index = int(merged.get("input_player1_joypad_index", "0"))
+    except ValueError:
+        index = 0
+    return found[index] if 0 <= index < len(found) else None
+
+
 def report(args):
-    config = read_cfg(args.config) if args.config else {}
-    appended = read_cfg(args.append) if args.append else {}
-    merged = dict(config)
-    merged.update(appended)
+    merged = settings(args)
 
     dirs = [merged.get("joypad_autoconfig_dir", "")] if merged.get("joypad_autoconfig_dir") else []
     dirs += [d for d in AUTOCONFIG_DIRS if d not in dirs]
 
-    found = pads()
-    index = 0
-    try:
-        index = int(merged.get("input_player1_joypad_index", "0"))
-    except ValueError:
-        pass
-
-    if 0 <= index < len(found):
-        pad = found[index]
+    pad = player_one(merged)
+    if pad:
         try:
             layout = Layout(pad["event"])
             dpad = "hat" if layout.hats else "none"
@@ -224,40 +240,116 @@ def report(args):
     return 0
 
 
+def translate(layout, held, ev, code, value):
+    """One input event as press lines, in RetroArch's terms. `held` carries
+    which hat directions and axis halves are down between calls."""
+    if ev == EV_KEY and code in layout.buttons:
+        yield "button\t%d\t%d" % (layout.buttons[code], 1 if value else 0)
+    elif ev == EV_ABS and code in layout.hats:
+        # Hat 0 only: that is what h0up and friends name.
+        if code - ABS_HAT0X >= 2:
+            return
+        neg, pos = ("left", "right") if (code - ABS_HAT0X) == 0 else ("up", "down")
+        for direction, on in ((neg, value < 0), (pos, value > 0)):
+            if held.get(direction, False) != on:
+                held[direction] = on
+                yield "hat\t%s\t%d" % (direction, 1 if on else 0)
+    elif ev == EV_ABS and code in layout.axes:
+        low, high = layout.ranges[code]
+        middle = (low + high) / 2.0
+        span = (high - low) / 2.0 or 1
+        position = (value - middle) / span
+        n = layout.axes[code]
+        for sign, on in (("-", position < -0.5), ("+", position > 0.5)):
+            key = "%s%d" % (sign, n)
+            if held.get(key, False) != on:
+                held[key] = on
+                yield "axis\t%s\t%d" % (key, 1 if on else 0)
+
+
 def watch(path):
     layout = Layout(path)
-    fmt = "llHHi"
-    size = struct.calcsize(fmt)
     held = {}
     with open(path, "rb", buffering=0) as fh:
         while True:
-            data = fh.read(size)
-            if len(data) < size:
+            data = fh.read(EVENT.size)
+            if len(data) < EVENT.size:
                 return 0
-            _, _, ev, code, value = struct.unpack(fmt, data)
-            if ev == EV_KEY and code in layout.buttons:
-                print("button\t%d\t%d" % (layout.buttons[code], 1 if value else 0), flush=True)
-            elif ev == EV_ABS and code in layout.hats:
-                # Hat 0 only: that is what h0up and friends name.
-                axis = (code - ABS_HAT0X) % 2
-                if code - ABS_HAT0X >= 2:
-                    continue
-                neg, pos = ("left", "right") if axis == 0 else ("up", "down")
-                for direction, on in ((neg, value < 0), (pos, value > 0)):
-                    if held.get(direction, False) != on:
-                        held[direction] = on
-                        print("hat\t%s\t%d" % (direction, 1 if on else 0), flush=True)
-            elif ev == EV_ABS and code in layout.axes:
-                low, high = layout.ranges[code]
-                middle = (low + high) / 2.0
-                span = (high - low) / 2.0 or 1
-                position = (value - middle) / span
-                n = layout.axes[code]
-                for sign, on in (("-", position < -0.5), ("+", position > 0.5)):
-                    key = "%s%d" % (sign, n)
-                    if held.get(key, False) != on:
-                        held[key] = on
-                        print("axis\t%s\t%d" % (key, 1 if on else 0), flush=True)
+            _, _, ev, code, value = EVENT.unpack(data)
+            for line in translate(layout, held, ev, code, value):
+                print(line, flush=True)
+
+
+def follow(args):
+    import select
+
+    want_grab = False
+    announced = None
+
+    def commands(timeout):
+        """Reads grab/release from stdin; False once it has closed."""
+        nonlocal want_grab
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+        if not ready:
+            return True
+        line = sys.stdin.readline()
+        if not line:
+            return False
+        word = line.strip()
+        if word in ("grab", "release"):
+            want_grab = word == "grab"
+        return True
+
+    while True:
+        pad = player_one(settings(args))
+        fd = None
+        if pad:
+            try:
+                layout = Layout(pad["event"])
+                fd = os.open(pad["event"], os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                fd = None
+        if fd is None:
+            if announced != "gone":
+                print("gone", flush=True)
+                announced = "gone"
+            # Plugged in later is found within two seconds.
+            if not commands(2.0):
+                return 0
+            continue
+
+        print("device\t%s\t%s" % (pad["event"], pad["name"]), flush=True)
+        announced = pad["event"]
+        held = {}
+        grabbed = False
+        try:
+            while True:
+                if want_grab != grabbed:
+                    try:
+                        fcntl.ioctl(fd, EVIOCGRAB, 1 if want_grab else 0)
+                        grabbed = want_grab
+                    except OSError:
+                        want_grab = grabbed
+                ready, _, _ = select.select([fd, sys.stdin], [], [])
+                if sys.stdin in ready and not commands(0):
+                    return 0
+                if fd in ready:
+                    try:
+                        data = os.read(fd, EVENT.size * 64)
+                    except BlockingIOError:
+                        continue
+                    if not data:
+                        break
+                    for offset in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                        _, _, ev, code, value = EVENT.unpack_from(data, offset)
+                        for line in translate(layout, held, ev, code, value):
+                            print(line, flush=True)
+        except OSError:
+            pass  # unplugged: the device is gone mid-read
+        finally:
+            os.close(fd)
+        print("gone", flush=True)
+        announced = "gone"
 
 
 def main(argv):
@@ -266,10 +358,14 @@ def main(argv):
     parser.add_argument("--append", help="the arcade binds file layered over it")
     parser.add_argument("--log", help="arcade.log, for what RetroArch said at the last launch")
     parser.add_argument("--watch", metavar="DEVICE", help="stream presses from this event device")
+    parser.add_argument("--follow", action="store_true",
+                        help="stream player 1's presses through unplugging; grab/release on stdin")
     args = parser.parse_args(argv[1:])
     try:
         if args.watch:
             return watch(args.watch)
+        if args.follow:
+            return follow(args)
         return report(args)
     except KeyboardInterrupt:
         return 0

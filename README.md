@@ -139,6 +139,30 @@ A launch that failed is not counted as a game played. The launcher waits up to
 twenty seconds for an answer: a large CHD can take that long to load, and a
 guess would close a game that was about to start.
 
+## With the stick
+
+A game controller works the panel too, and **Home opens it**. Nothing needs
+installing for that: the plugin stays loaded in the shell and follows the
+controller RetroArch gives player 1, through unplugging and replugging.
+
+| Stick | On the wall | In the settings |
+|-------|-------------|-----------------|
+| Home | opens the panel (when no game is running); closes it | closes it |
+| lever | moves; held, keeps moving | moves between rows; ← → change a choice |
+| B, Start | plays the selected game | changes a choice, starts the stick test |
+| A | clears the search, then closes | back to the wall |
+| Y, X | the previous / next version of the game | |
+| L, R | a page up / down | |
+| Minus (coin) | opens the settings | back to the wall |
+
+Buttons are RetroPad buttons, as RetroArch's profile names them, so this holds
+for any controller RetroArch knows. With a game running, Home is RetroArch's own
+menu and the panel leaves it alone. Quit from that menu and Home opens the
+panel again. While the panel is open it takes the stick for itself (an
+exclusive grab), so a game running behind it does not also receive every
+press. The footer switches to the stick's hints whenever the stick was the last
+thing used.
+
 ## Search
 
 Matching looks at both names, because half of arcade memory is the short one:
@@ -344,8 +368,8 @@ Every control row also says which stick button does that job, for example
 panel says what it does in a game — `B → Button 1`, and `Light Kick` in
 3-punch, 3-kick fighters — while the matching tile lights up for as long as
 it is held. A button that lights nothing is called out: not bound in RetroArch,
-not used by arcade games (`ZL`, the stick clicks), or the analog stick. `Esc`
-ends the test.
+not used by arcade games (`ZL`, the stick clicks), or the analog stick. `Esc`,
+or holding Home for a second, ends the test.
 
 The test reads the stick directly (`bin/arcade-pad`, no root needed). It numbers
 buttons the way RetroArch's udev driver does and looks them up in the same
@@ -357,7 +381,8 @@ that setting RetroPad `B` is the stick's `B`, and the labels in the panel
 match what is printed on the buttons.
 
 ```bash
-arcade-launcher --controller   # PAD, PROFILE, BIND and SEEN lines, tab separated
+arcade-launcher --controller            # PAD, PROFILE, BIND and SEEN lines, tab separated
+arcade-launcher --controller --follow   # its presses as they happen
 ```
 
 ### Where the binds live
@@ -433,7 +458,11 @@ has the window rules and a keybinding in classic `windowrulev2` syntax.
 
 ## Controller hotplug (optional)
 
-Templates in [`udev/`](udev), not installed by `install.sh`:
+With `omarchy-shell` you do not need this: the stick's Home button opens the
+panel (see [With the stick](#with-the-stick)). These templates are for the
+launcher on its own, on a plain Hyprland install, where plugging a stick in
+opens the dmenu-style menu. They are in [`udev/`](udev), not installed by
+`install.sh`:
 
 ```bash
 sudo install -m644 udev/99-arcade-stick.rules /etc/udev/rules.d/99-arcade-stick.rules
@@ -458,7 +487,7 @@ manifest.json                  plugin manifest
 bin/arcade-launcher            lists and launches; the panel's whole backend
 bin/arcade-rdb-dump            libretro .rdb -> TSV extractor (python3, no deps)
 bin/arcade-artwork             title-screen fetcher and cache (python3, no deps)
-bin/arcade-pad                 finds the stick, matches RetroArch's profile, runs the test
+bin/arcade-pad                 finds the stick, matches RetroArch's profile, follows its presses
 share/arcade-titles.tsv        title overrides, used until you have your own
 share/arcade.conf.example      commented config template
 hypr/hyprland.conf.snippet     plain-Hyprland window rules
