@@ -54,6 +54,11 @@ Item {
   property bool addOk: true
   // The first game a drop added, to be selected once the list has it.
   property string pendingSelectRom: ""
+  // The panel stepped aside: only a drop zone in the corner is left, and the
+  // keyboard and pointer are the desktop's again, so romsets can be dragged
+  // out of a file manager. The full panel covers the screen and holds the
+  // keyboard, which leaves nothing to drag from.
+  property bool dropMode: false
 
   // ---- settings
   // Everything the panel can be told is a key in arcade.conf, read back from
@@ -210,6 +215,7 @@ Item {
   }
 
   function close() {
+    root.dropMode = false
     root.stopPadTest()
     root.stopStickRepeat()
     root.flushSettings()
@@ -315,6 +321,11 @@ Item {
 
     var action = Model.stickAction(press.retropad, root.stickView)
     if (!action) return
+    // The drop zone is for the mouse; the stick can only put the panel back.
+    if (root.dropMode) {
+      if (press.down && (action === "back" || action === "close")) root.leaveDropMode()
+      return
+    }
     if (!press.down) {
       if (stickRepeat.action === action) root.stopStickRepeat()
       return
@@ -596,6 +607,19 @@ Item {
   // Romsets dropped on the panel: copied into the ROM directory, each one
   // test-loaded headless, kept only if it runs, artwork fetched. The launcher
   // does all of it; the panel says what happened and goes to the new game.
+  function enterDropMode() {
+    if (root.settingsOpen) root.closeSettings()
+    root.stopStickRepeat()
+    root.dropHover = false
+    root.dropMode = true
+  }
+
+  function leaveDropMode() {
+    root.dropMode = false
+    root.dropHover = false
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
   function addGames(paths) {
     if (paths.length === 0) return
     if (addProc.running) { root.statusMessage = "Still checking the last drop…"; return }
@@ -1050,8 +1074,16 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "omarchy-arcade"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: root.dropMode ? WlrKeyboardFocus.None : WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
+    // Stepped aside, the panel takes input only on its drop zone; clicks and
+    // drags anywhere else reach the desktop underneath.
+    mask: Region { item: root.dropMode ? dropZone : wholeScreen }
+
+    Item {
+      id: wholeScreen
+      anchors.fill: parent
+    }
 
     // The selected game's title screen, blurred across the whole screen and
     // pushed well back: the room lit by the cabinet you are standing at.
@@ -1067,6 +1099,7 @@ Item {
     }
 
     MultiEffect {
+      visible: !root.dropMode
       anchors.fill: parent
       source: backdropArt
       autoPaddingEnabled: false
@@ -1080,23 +1113,27 @@ Item {
     }
 
     Rectangle {
+      visible: !root.dropMode
       anchors.fill: parent
       color: root.scrim
     }
 
     // The scrim alone lets the desktop through; the arcade wants the room dark.
     Rectangle {
+      visible: !root.dropMode
       anchors.fill: parent
       color: Util.alpha("#000000", 0.45)
     }
 
     MouseArea {
+      visible: !root.dropMode
       anchors.fill: parent
       onClicked: root.close()
     }
 
     BorderSurface {
       id: card
+      visible: !root.dropMode
       width: root.cardWidth
       height: root.cardHeight
       radius: root.cornerRadius
@@ -1135,6 +1172,11 @@ Item {
           }
           if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Comma) {
             root.openSettings()
+            event.accepted = true
+            return
+          }
+          if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_O) {
+            root.enterDropMode()
             event.accepted = true
             return
           }
@@ -1221,7 +1263,7 @@ Item {
               visible: !root.settingsOpen
               anchors.left: wordmark.right
               anchors.leftMargin: Style.space(16)
-              anchors.right: gearButton.left
+              anchors.right: addButton.left
               anchors.rightMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
               height: parent.height
@@ -1294,6 +1336,37 @@ Item {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideMiddle
+            }
+
+            // Adding games: the panel steps aside to a drop zone.
+            Rectangle {
+              id: addButton
+              visible: !root.settingsOpen
+              anchors.right: gearButton.left
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.height
+              height: parent.height
+              radius: height / 2
+              color: addArea.containsMouse ? Util.alpha(root.accent, 0.16) : Util.alpha(root.foreground, 0.06)
+              Behavior on color { ColorAnimation { duration: 130 } }
+
+              Text {
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: "󰐕"
+                color: addArea.containsMouse ? root.accent : root.foreground
+                opacity: addArea.containsMouse ? 1 : 0.5
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+              }
+
+              MouseArea {
+                id: addArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.enterDropMode()
+              }
             }
 
             // The wall's way in and out of the editor, for the half of the time
@@ -1995,7 +2068,7 @@ Item {
     Rectangle {
       anchors.fill: card
       radius: card.radius
-      visible: root.dropHover
+      visible: root.dropHover && !root.dropMode
       color: Util.alpha(root.background, 0.92)
       border.width: Math.max(2, Style.space(3))
       border.color: root.accent
@@ -2045,7 +2118,87 @@ Item {
         root.dropHover = false
         if (!drop.hasUrls) return
         drop.accept(Qt.CopyAction)
+        if (root.dropMode) root.leaveDropMode()
         root.addGames(Model.droppedPaths(drop.urls))
+      }
+    }
+
+    // ---- the drop zone, when the panel has stepped aside
+    Rectangle {
+      id: dropZone
+      visible: root.dropMode
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.margins: Style.gapsOut * 2
+      width: Style.space(460)
+      height: Style.space(300)
+      radius: root.cornerRadius * 2
+      color: root.dropHover ? Util.alpha(root.accent, 0.22) : root.background
+      border.width: Math.max(2, Style.space(3))
+      border.color: root.dropHover ? root.accent : Util.alpha(root.accent, 0.55)
+      Behavior on color { ColorAnimation { duration: 120 } }
+
+      Column {
+        anchors.centerIn: parent
+        width: parent.width - Style.space(48)
+        spacing: Style.space(8)
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: "󰇚"
+          color: root.accent
+          font.family: root.fontFamily
+          font.pixelSize: Math.round(Style.font.title * 2.6)
+        }
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          textFormat: Text.PlainText
+          text: root.dropHover ? "Let go to add them" : "Drop romsets here"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Math.round(Style.font.title * 1.3)
+          font.bold: true
+        }
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+          textFormat: Text.PlainText
+          text: "Drag them from your file manager. Each one is test-loaded; only games that run go in."
+          color: root.foreground
+          opacity: 0.55
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      // Back to the panel without adding anything.
+      Rectangle {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Style.space(10)
+        width: Style.space(34)
+        height: width
+        radius: width / 2
+        color: cancelArea.containsMouse ? Util.alpha(root.accent, 0.2) : Util.alpha(root.foreground, 0.08)
+
+        Text {
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: "󰅖"
+          color: cancelArea.containsMouse ? root.accent : root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        MouseArea {
+          id: cancelArea
+          anchors.fill: parent
+          hoverEnabled: true
+          onClicked: root.leaveDropMode()
+        }
       }
     }
   }

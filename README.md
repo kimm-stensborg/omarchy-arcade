@@ -83,6 +83,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `PgUp` `PgDn`, `Home` `End` | jump |
 | `Enter` | launch the selected game, or return to it if it is running |
 | `Tab` `Shift+Tab` | another version of the selected game |
+| `Ctrl+O` | add games: the panel steps aside to a drop zone |
 | `F5` | re-read the ROM directory |
 | `Ctrl+,` | open the settings, controls included |
 | `Esc` | close |
@@ -150,9 +151,14 @@ guess would close a game that was about to start.
 
 ## Adding games
 
-Drag romsets out of a file manager and drop them anywhere on the panel. The
-panel covers the screen, so start the drag first, then open it with
-`Super+A` (or Home on the stick) while still holding the files, and let go.
+Press **`+`** in the header (or `Ctrl+O`). The panel steps aside: all that is
+left is a drop zone in the bottom-right corner, and the keyboard and mouse are
+your desktop's again. Drag romsets from your file manager onto the zone. The
+panel comes back with the result as soon as you let go. The `✕` on the zone,
+or A or Home on the stick, brings it back without adding anything.
+
+The full panel covers the screen and holds the keyboard. That is right for
+choosing a game, but it leaves no file manager to drag from, hence the zone.
 
 Each file is copied into `ROM_DIR` and then **test-loaded**: RetroArch runs the
 core for two frames with no window and no sound, and the same log lines that
