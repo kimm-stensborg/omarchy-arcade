@@ -287,10 +287,18 @@ function addSummary(text) {
   var why = first.rejected || first.conflict || first.skipped
   return {
     title: pieces.join("  ·  ") || "Nothing to add",
-    detail: why ? why.name + ": " + why.detail : "",
+    detail: why ? why.name + ": " + why.detail + (turned > 1 ? "  (+" + (turned - 1) + " more)" : "") : "",
     added: added,
     ok: turned === 0
   }
+}
+
+// "checking<TAB>name<TAB>n<TAB>of" from --add, as the info bar says it while
+// a drop is being worked through; "" for any other line.
+function addProgress(line) {
+  var parts = String(line || "").split("\t")
+  if (parts[0] !== "checking" || parts.length < 4) return ""
+  return parts[3] === "1" ? "Checking " + parts[1] + "…" : "Checking " + parts[1] + "  (" + parts[2] + " of " + parts[3] + ")…"
 }
 
 // Dropped URLs as local paths; anything not a local file is left out.

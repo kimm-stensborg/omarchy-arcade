@@ -21,6 +21,7 @@ thumbnail server and cached locally. Type to filter, arrow around, Enter plays.
 | `retroarch` | running the games |
 | `libretro-fbneo-git` *or* `libretro-mame` | the arcade core |
 | `python` | `bin/arcade-rdb-dump`, which reads the libretro databases |
+| `zenity` | the file chooser for adding games (optional; drag and drop works without it) |
 | `libretro-database-git` | the title database (ships with RetroArch on Omarchy) |
 
 Nothing is fetched at runtime. `wofi`, `rofi` or `fuzzel` are optional: the
@@ -83,7 +84,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `PgUp` `PgDn`, `Home` `End` | jump |
 | `Enter` | launch the selected game, or return to it if it is running |
 | `Tab` `Shift+Tab` | another version of the selected game |
-| `Ctrl+O` | add games: the panel steps aside to a drop zone |
+| `Ctrl+O` | add games: pick romsets in a file chooser (`+` in the header for a drop zone) |
 | `F5` | re-read the ROM directory |
 | `Ctrl+,` | open the settings, controls included |
 | `Esc` | close |
@@ -151,11 +152,21 @@ guess would close a game that was about to start.
 
 ## Adding games
 
-Press **`+`** in the header (or `Ctrl+O`). The panel steps aside: all that is
-left is a drop zone in the bottom-right corner, and the keyboard and mouse are
-your desktop's again. Drag romsets from your file manager onto the zone. The
-panel comes back with the result as soon as you let go. The `✕` on the zone,
-or A or Home on the stick, brings it back without adding anything.
+Two ways in, and both take as many files as you like at once:
+
+- **`Ctrl+O` opens a file chooser**: your desktop's own, multi-select,
+  filtered to `.zip`, `.7z` and `.chd`, and opening in the folder you picked
+  from last time (the download folder the first time).
+- **`+` in the header steps the panel aside.** All that is left is a drop zone
+  in the bottom-right corner, and the keyboard and mouse are your desktop's
+  again. Drag romsets from your file manager onto the zone, a whole folder
+  included (the romsets in it, not its subfolders). The zone's **Browse
+  files…** button opens the same chooser.
+
+The panel comes back with the result as soon as you drop or choose, counting
+through a big batch in the info bar ("Checking pang.zip (3 of 12)…"). The `✕`
+on the zone, or A or Home on the stick, brings it back without adding
+anything.
 
 The full panel covers the screen and holds the keyboard. That is right for
 choosing a game, but it leaves no file manager to drag from, hence the zone.
@@ -180,7 +191,8 @@ config.
 The same from a terminal, one `result<TAB>file<TAB>detail` line per file:
 
 ```bash
-arcade-launcher --add ~/Downloads/*.zip
+arcade-launcher --add ~/Downloads/*.zip   # or a folder: ~/Downloads
+arcade-launcher --add $(arcade-launcher --pick)   # choose them in a file chooser
 ```
 
 ## With the stick

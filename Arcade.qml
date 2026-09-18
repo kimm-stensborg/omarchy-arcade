@@ -59,6 +59,10 @@ Item {
   // out of a file manager. The full panel covers the screen and holds the
   // keyboard, which leaves nothing to drag from.
   property bool dropMode: false
+  // Everything --add has said so far, summed up when it finishes.
+  property string addOutput: ""
+  // Why the file chooser could not open, shown on the drop zone.
+  property string pickError: ""
 
   // ---- settings
   // Everything the panel can be told is a key in arcade.conf, read back from
@@ -611,7 +615,16 @@ Item {
     if (root.settingsOpen) root.closeSettings()
     root.stopStickRepeat()
     root.dropHover = false
+    root.pickError = ""
     root.dropMode = true
+  }
+
+  // The file chooser, for romsets that are easier picked than dragged. The
+  // panel has already stepped aside, so the chooser is not hidden behind it.
+  function pickGames() {
+    if (pickProc.running || addProc.running) return
+    root.pickError = ""
+    pickProc.running = true
   }
 
   function leaveDropMode() {
@@ -628,6 +641,7 @@ Item {
     root.statusMessage = paths.length === 1
       ? "Checking " + paths[0].replace(/^.*\//, "") + "…"
       : "Checking " + paths.length + " files…"
+    root.addOutput = ""
     addProc.command = [root.launcher, "--add"].concat(paths)
     addProc.running = true
   }
@@ -734,17 +748,23 @@ Item {
 
   Process {
     id: addProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var summary = Model.addSummary(text)
-        root.statusMessage = summary.title
-        root.addNote = summary.detail
-        root.addOk = summary.ok
-        if (summary.added.length > 0) {
-          root.filterText = ""
-          root.pendingSelectRom = summary.added[0]
-        }
+    // Line by line, so a big drop counts through in the info bar.
+    stdout: SplitParser {
+      onRead: function(line) {
+        root.addOutput += line + "\n"
+        var progress = Model.addProgress(line)
+        if (progress) root.statusMessage = progress
+      }
+    }
+    onRunningChanged: {
+      if (running) return
+      var summary = Model.addSummary(root.addOutput)
+      root.statusMessage = summary.title
+      if (!root.addNote) root.addNote = summary.detail
+      root.addOk = root.addOk && summary.ok
+      if (summary.added.length > 0) {
+        root.filterText = ""
+        root.pendingSelectRom = summary.added[0]
       }
     }
     stderr: StdioCollector {
@@ -755,6 +775,29 @@ Item {
       }
     }
     onExited: root.refresh()
+  }
+
+  Process {
+    id: pickProc
+    command: [root.launcher, "--pick"]
+    stdout: StdioCollector {
+      id: pickOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: pickErr
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        var paths = pickOut.text.split("\n").filter(function(p) { return p.length > 0 })
+        root.leaveDropMode()
+        root.addGames(paths)
+      } else if (pickErr.text && pickErr.text.trim()) {
+        root.pickError = pickErr.text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+      }
+      // Cancelled: the zone stays, ready for a drop or another browse.
+    }
   }
 
   Process {
@@ -1175,8 +1218,12 @@ Item {
             event.accepted = true
             return
           }
+          // Ctrl+O opens the file chooser. The panel steps aside to its drop
+          // zone at the same time -- the zone cannot hold the keyboard, so the
+          // shortcut lives here -- and a drag works just as well meanwhile.
           if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_O) {
             root.enterDropMode()
+            root.pickGames()
             event.accepted = true
             return
           }
@@ -2130,8 +2177,8 @@ Item {
       anchors.right: parent.right
       anchors.bottom: parent.bottom
       anchors.margins: Style.gapsOut * 2
-      width: Style.space(460)
-      height: Style.space(300)
+      width: Style.space(480)
+      height: Style.space(340)
       radius: root.cornerRadius * 2
       color: root.dropHover ? Util.alpha(root.accent, 0.22) : root.background
       border.width: Math.max(2, Style.space(3))
@@ -2166,11 +2213,49 @@ Item {
           horizontalAlignment: Text.AlignHCenter
           wrapMode: Text.WordWrap
           textFormat: Text.PlainText
-          text: "Drag them from your file manager. Each one is test-loaded; only games that run go in."
-          color: root.foreground
-          opacity: 0.55
+          text: root.pickError
+            || "Drag them from your file manager, as many as you like, or a whole folder. Each one is test-loaded; only games that run go in."
+          color: root.pickError ? root.accent : root.foreground
+          opacity: root.pickError ? 1 : 0.55
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
+        }
+
+        Item { width: 1; height: Style.space(4) }
+
+        // Or pick them: the file chooser, several at once.
+        Rectangle {
+          anchors.horizontalCenter: parent.horizontalCenter
+          height: Style.font.body + Style.space(18)
+          width: browseRow.implicitWidth + Style.space(28)
+          radius: height / 2
+          color: browseArea.containsMouse || pickProc.running
+            ? Util.alpha(root.accent, 0.28) : Util.alpha(root.accent, 0.14)
+          border.width: Math.max(1, Style.space(1))
+          border.color: Util.alpha(root.accent, 0.6)
+
+          Row {
+            id: browseRow
+            anchors.centerIn: parent
+            spacing: Style.space(10)
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: pickProc.running ? "Choosing…" : "󰉋  Browse files…"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+          }
+
+          MouseArea {
+            id: browseArea
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: root.pickGames()
+          }
         }
       }
 

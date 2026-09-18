@@ -654,7 +654,8 @@ is_bios_set() {
   [[ "$title" =~ bios\)?$ || "$title" =~ internal\ p?rom$ ]]
 }
 
-# One "result<TAB>name<TAB>detail" line per file:
+# One "result<TAB>name<TAB>detail" line per file, each after a
+# "checking<TAB>name<TAB>n<TAB>of" line announcing it:
 #   added      a game, copied in and tested       detail: its title
 #   bios       a BIOS or device set, copied in    detail: its title
 #   exists     already in ROM_DIR, identical      detail: its title
@@ -662,9 +663,29 @@ is_bios_set() {
 #   rejected   copied in, would not run, taken out again   detail: why
 #   skipped    not a romset at all                detail: why
 cmd_add() {
-  local file name rom dest ext title reason ok_ext added=()
+  local file name rom dest ext title reason ok_ext added=() arg index=0
   mkdir -p -- "$ROM_DIR" || die "$EX_NO_ROM_DIR" "cannot create $ROM_DIR"
-  for file in "$@"; do
+
+  # A folder stands for the romsets in it (not its subfolders): dropping a
+  # download folder adds the games in it without picking them one by one.
+  local -a files=() pattern=()
+  for ext in $ROM_EXTS; do
+    ((${#pattern[@]})) && pattern+=(-o)
+    pattern+=(-iname "*.$ext")
+  done
+  for arg in "$@"; do
+    if [[ -d "$arg" ]]; then
+      while IFS= read -r -d '' file; do files+=("$file"); done < <(
+        find "$arg" -maxdepth 1 -type f \( "${pattern[@]}" \) -print0 | sort -z)
+    else
+      files+=("$arg")
+    fi
+  done
+
+  for file in "${files[@]}"; do
+    index=$((index + 1))
+    # Said before each one, so a long drop can be followed as it goes.
+    printf 'checking\t%s\t%d\t%d\n' "${file##*/}" "$index" "${#files[@]}"
     name="${file##*/}"
     rom="${name%.*}"
     ext="${name##*.}"
@@ -958,7 +979,9 @@ Usage:
   $PROGRAM --set-control ID=KEY
                             Bind one control, e.g. coin1=num5 (empty = unbind)
   $PROGRAM --add FILE...    Copy romsets into ROM_DIR, test that each runs, keep
-                            the ones that do, fetch their artwork
+                            the ones that do, fetch their artwork. A folder
+                            stands for the romsets in it
+  $PROGRAM --pick           Choose romsets in a file chooser; prints their paths
   $PROGRAM --stop           Close the game this launcher started (1: none running,
                             72: a RetroArch started some other way is left alone)
   $PROGRAM --controller     Print the game controller RetroArch will use, its
@@ -1426,6 +1449,25 @@ main() {
         [[ "$bind" == *=* ]] || die "$EX_USAGE" "not an ID=KEY pair: $bind"
         set_control "${bind%%=*}" "${bind#*=}"
       done
+      exit 0
+      ;;
+    --pick)
+      # A file chooser for romsets, several at a time; the chosen paths, one
+      # per line. Exit 1 when it was cancelled. It opens where the last pick
+      # was made, or in the download folder.
+      local last_dir_file="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/arcade-pick-dir" start chosen
+      start="$(cat -- "$last_dir_file" 2>/dev/null || true)"
+      [[ -d "$start" ]] || start="$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
+      [[ -d "$start" ]] || start="$HOME"
+      command -v zenity >/dev/null 2>&1 ||
+        die 1 "no file chooser: install zenity ($(package_command) zenity)"
+      local filter="Romsets |"
+      for ext in $ROM_EXTS; do filter+=" *.${ext,,} *.${ext^^}"; done
+      chosen="$(zenity --file-selection --multiple --separator=$'\n' --title="Add games to the arcade" \
+        --filename="$start/" --file-filter="$filter" --file-filter="All files | *" 2>/dev/null)" || exit 1
+      [[ -n "$chosen" ]] || exit 1
+      mkdir -p "${last_dir_file%/*}" && printf '%s\n' "$(dirname -- "$(head -n1 <<<"$chosen")")" >"$last_dir_file"
+      printf '%s\n' "$chosen"
       exit 0
       ;;
     --add)

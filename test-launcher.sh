@@ -399,22 +399,36 @@ printf 'bios' >"$drop/qsound.zip"
 printf 'hello' >"$drop/notes.txt"
 before="$(ls "$HOME/Games/roms" | wc -l)"
 added="$("$launcher" --add "$drop/freshgood.zip" "$drop/freshbad.zip" "$drop/freshcrash.zip" \
-  "$drop/qsound.zip" "$drop/notes.txt" | cut -f1,2 | tr '\t\n' ' |')"
+  "$drop/qsound.zip" "$drop/notes.txt" | grep -v '^checking' | cut -f1,2 | tr '\t\n' ' |')"
 check "each dropped file gets a verdict" "$added" \
   "added freshgood.zip|rejected freshbad.zip|rejected freshcrash.zip|bios qsound.zip|skipped notes.txt|"
 check "a game that runs is in the collection" "$(cat "$HOME/Games/roms/freshgood.zip")" "fresh"
 check "one that does not is taken out again" \
   "$([[ -e "$HOME/Games/roms/freshbad.zip" || -e "$HOME/Games/roms/freshcrash.zip" ]] && echo left || echo gone)" "gone"
-check "saying why" "$("$launcher" --add "$drop/freshbad.zip" | cut -f3)" \
+check "saying why" "$("$launcher" --add "$drop/freshbad.zip" | grep -v '^checking' | cut -f3)" \
   "1 file is missing from the romset (201-p1.p1) -- it may be for another version, or need its BIOS."
 check "a BIOS goes in without being played" "$(cat "$HOME/Games/roms/qsound.zip")" "bios"
 check "the original is left where it was" "$(cat "$drop/freshgood.zip")" "fresh"
 check "nothing else went in" "$(ls "$HOME/Games/roms" | wc -l)" "$((before + 2))"
-check "the same file again is already there" "$("$launcher" --add "$drop/freshgood.zip" | cut -f1)" "exists"
+check "the same file again is already there" "$("$launcher" --add "$drop/freshgood.zip" | grep -v '^checking' | cut -f1)" "exists"
 printf 'other' >"$drop/other.zip"
 check "a different file of the same name is never replaced" \
-  "$("$launcher" --add "$drop/other.zip" | cut -f1)$(cat "$HOME/Games/roms/other.zip" 2>/dev/null)" "conflict"
+  "$("$launcher" --add "$drop/other.zip" | grep -v '^checking' | cut -f1)$(cat "$HOME/Games/roms/other.zip" 2>/dev/null)" "conflict"
 check "and no test load is left running" "$(games_running)" "0"
+
+# Several at once: a folder stands for the romsets in it.
+batch="$sandbox/batch"
+mkdir -p "$batch/nested"
+printf 'a' >"$batch/onegood.zip"
+printf 'b' >"$batch/twogood.ZIP"
+printf 'c' >"$batch/readme.txt"
+printf 'd' >"$batch/nested/deepgood.zip"
+out="$("$launcher" --add "$batch")"
+check "each file is announced as it is checked, counted" \
+  "$(grep '^checking' <<<"$out" | cut -f2- | tr '\t\n' ' |')" "onegood.zip 1 2|twogood.ZIP 2 2|"
+check "a folder adds the romsets in it" "$(grep -v '^checking' <<<"$out" | cut -f1,2 | tr '\t\n' ' |')" \
+  "added onegood.zip|added twogood.ZIP|"
+check "but not the ones in folders inside it" "$([[ -e "$HOME/Games/roms/deepgood.zip" ]] && echo yes || echo no)" "no"
 
 printf '\n'
 if ((failed)); then

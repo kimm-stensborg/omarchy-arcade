@@ -141,7 +141,12 @@ const mixed = M.addSummary([
   "skipped\tnotes.txt\tnot a romset (zip, 7z, chd)",
 ].join("\n"))
 check("several are counted", mixed.title, "Added 2 games  ·  2 not added")
-check("and the first reason is given", mixed.detail, "mslug.zip: 13 files are missing from the romset")
+check("and the first reason is given, with how many more", mixed.detail,
+      "mslug.zip: 13 files are missing from the romset  (+1 more)")
+check("progress on a long drop", M.addProgress("checking\tpang.zip\t3\t12"), "Checking pang.zip  (3 of 12)…")
+check("a single file needs no count", M.addProgress("checking\tpang.zip\t1\t1"), "Checking pang.zip…")
+check("verdicts are not progress", M.addProgress("added\tpang.zip\tPang"), "")
+check("progress lines are not verdicts", M.addSummary("checking\tpang.zip\t1\t1\nadded\tpang.zip\tPang").title, "Added Pang")
 check("a lone rejection says so plainly", M.addSummary("rejected\tx.zip\tbroken").title, "Not added")
 check("a file already there", M.addSummary("exists\tbublbobl.zip\tBubble Bobble").title,
       "Bubble Bobble is already in your collection")
