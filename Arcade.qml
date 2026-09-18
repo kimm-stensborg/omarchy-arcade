@@ -459,10 +459,18 @@ Item {
 
   Process {
     id: artProc
+    // Whether this run reported anything. A run that did not -- python
+    // missing, an unusable ART_DIR -- would be asked the same question again
+    // straight away, forever.
+    property bool progressed: false
+    onRunningChanged: if (running) progressed = false
     stdout: SplitParser {
       onRead: function(line) {
         var next = Model.withArt(root.artMap, line)
-        if (next) root.artMap = next
+        if (next) {
+          root.artMap = next
+          artProc.progressed = true
+        }
       }
     }
     // Why a tile stayed blank -- an unreachable thumbnail server, most often --
@@ -472,7 +480,9 @@ Item {
       onStreamFinished: if (text && text.trim().length > 0) console.warn(root.pluginId + ":", text.trim())
     }
     // Keep going until every game has either an image or a recorded miss.
-    onExited: Qt.callLater(function() { root.requestArt() })
+    onExited: function(exitCode) {
+      if (exitCode === 0 && artProc.progressed) Qt.callLater(function() { root.requestArt() })
+    }
   }
 
   Process {

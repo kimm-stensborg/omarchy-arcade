@@ -23,7 +23,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_URL = "https://thumbnails.libretro.com"
 
@@ -131,21 +131,27 @@ def fetch_one(rom, title, art_dir, kinds, unreachable=None):
     if os.path.exists(miss) or not title:
         return ""
 
-    # Whether the server ever actually answered. A download that fails because
-    # the machine is offline says nothing about the artwork, and must not be
-    # remembered as a miss.
+    # Whether the server ever actually answered, and whether anything went
+    # unanswered. Only a 404 on every URL is a miss: a machine that is offline,
+    # a timeout or a 5xx says nothing about the artwork, and remembering it as
+    # a miss would leave the tile blank long after the network came back.
     answered = False
+    unsure = False
     noted = False
 
     for url in thumbnail_urls(title, kinds):
         try:
             data = download(url)
-        except urllib.error.HTTPError:
-            answered = True  # it replied, it just does not have this one
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                answered = True  # it replied, it just does not have this one
+            else:
+                unsure = True  # busy or broken right now; ask again later
             continue
         except (urllib.error.URLError, OSError) as err:
             # No network, DNS, timeout: nothing was learned. Worth one line in
             # the caller's report, once per game rather than once per URL.
+            unsure = True
             if unreachable is not None and not noted:
                 unreachable.append("%s (%s)" % (rom, err))
                 noted = True
@@ -174,7 +180,7 @@ def fetch_one(rom, title, art_dir, kinds, unreachable=None):
     # round of requests rather than one per open. Only when the server answered:
     # recording a miss while offline would mark the whole library as artless
     # until someone ran --refresh on every game by hand.
-    if answered:
+    if answered and not unsure:
         try:
             open(miss, "a").close()
         except OSError:
@@ -257,7 +263,9 @@ def main(argv):
             pool.submit(fetch_one, rom, titles.get(rom, ""), args.dir, kinds, unreachable): rom
             for rom in pending
         }
-        for future in futures:
+        # As they land, not in the order asked: one slow server round trip
+        # should not hold back every tile queued behind it.
+        for future in as_completed(futures):
             rom = futures[future]
             try:
                 path = future.result()

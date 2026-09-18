@@ -264,6 +264,9 @@ check("carrying its key", cByKey.CONTROL_coin1.value, "num5")
 check("a bind from RetroArch's own config says so",
       M.describeSource(cByKey.CONTROL_exit), "from your RetroArch config")
 check("one set for the arcade says that", M.describeSource(cByKey.CONTROL_coin1), "set for the arcade")
+check("one bound nowhere is RetroArch's own default",
+      M.describeSource(M.controlRows(M.parseControls("CONTROLS_FILE\t/x\tabsent\nstart1\tenter\tdefault"))
+        .find((r) => r.key === "CONTROL_start1")), "RetroArch's default")
 
 check("the coin key reads as the 5 you press", M.controlDisplay(cByKey.CONTROL_coin1), "5")
 check("a modifier says which side", M.controlDisplay(cByKey.CONTROL_b1), "Left Ctrl")

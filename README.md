@@ -101,8 +101,9 @@ artwork for essentially every arcade romset. `bin/arcade-artwork` fetches them:
 - The first open fetches in the background, four at a time, and tiles fill in
   as images land. Nothing blocks; a game with no art yet shows its initials.
 - A game the server has nothing for gets a `.miss` marker, so the next open
-  does not ask again. `arcade-artwork --refresh <rom>` forgets that. Being
-  offline is never a miss: nothing is recorded, and it is tried again next time.
+  does not ask again. `arcade-artwork --refresh <rom>` forgets that. Only a
+  404 counts: no network, a timeout or a server error leaves the game to be
+  asked about again next time.
 - Preference order is title screen → in-game snap → boxart, since many arcade
   titles never had a box. Change it with `ART_KINDS` in `arcade.conf`.
 - `ARTWORK="off"` in `arcade.conf` means never touch the network. Whatever is
@@ -149,6 +150,12 @@ printf 'sfiii3\tStreet Fighter III: 3rd Strike\n' >> ~/.config/omarchy/arcade-ti
 The separator must be a real tab, which is why titles may contain colons and
 slashes freely. Two ROMs sharing a title both get their ROM name appended, so
 the pick stays unambiguous.
+
+BIOS and device sets — `neogeo.zip`, `pgm.zip`, `qsound.zip` — have to sit
+next to the games that need them, but are not games, so they are left out of
+the list: any set whose title ends in "BIOS" or "Internal ROM", plus a short
+list of well-known ones whose title does not say so. Give one a title of your
+own in the TSV to bring it back.
 
 ## When something is missing
 

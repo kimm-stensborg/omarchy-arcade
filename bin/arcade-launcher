@@ -248,13 +248,19 @@ cache_is_stale() {
 
 # Print "romname<TAB>title" for every mapping we know, user overrides first so a
 # later awk can let the first occurrence win.
+#
+# A \035 line separates your own titles from the rest, so the listing can tell
+# a set you have named yourself from one the database named.
 title_sources() {
-  local file
-  for file in "$TITLES_FILE" "$SHIPPED_TITLES_FILE"; do
-    [[ -r "$file" ]] || continue
-    grep -v '^[[:space:]]*#' -- "$file" | grep -v '^[[:space:]]*$' || true
-  done
+  title_lines "$TITLES_FILE"
+  printf '\035\n'
+  title_lines "$SHIPPED_TITLES_FILE"
   [[ -r "$CACHE_FILE" ]] && cat -- "$CACHE_FILE" || true
+}
+
+title_lines() {
+  [[ -r "$1" ]] || return 0
+  grep -v '^[[:space:]]*#' -- "$1" | grep -v '^[[:space:]]*$' || true
 }
 
 # --------------------------------------------------------------------------
@@ -277,17 +283,41 @@ find_roms() {
   find "$ROM_DIR" -maxdepth 2 -type f \( "${find_args[@]}" \) -print
 }
 
+# BIOS and device sets have to sit next to the games that need them, but are
+# not games: launching one boots to nothing. Most say so in their database
+# title ("PGM (Polygame Master) System BIOS", "NMK004 Internal ROM"); these are
+# the common ones whose title does not.
+readonly BIOS_SETS=(
+  neogeo neocdz qsound cpzn1 cpzn2 coh1000a coh1000c coh1000t coh1000w
+  coh1001l coh1002e coh1002m coh1002v coh3002c coh3002t tps taitofx1
+  konamigx naomi naomi2 awbios hod2bios hng64 chihiro triforce segasp
+  galgbios
+)
+
 # Emit "Display title<TAB>/path/to/rom.zip", sorted case-insensitively by title.
 # ROMs with no mapping keep their bare filename rather than a guessed title.
+# BIOS sets are left out; a title of your own in arcade-titles.tsv that does
+# not end in "BIOS" brings one back.
 build_menu_lines() {
   {
     title_sources
     printf '\034\n'
     find_roms
-  } | awk -F'\t' '
-    !seen_separator && $0 == "\034" { seen_separator = 1; next }
-    !seen_separator {
-      if (NF >= 2 && !($1 in title)) title[$1] = $2
+  } | awk -F'\t' -v bios_sets="${BIOS_SETS[*]}" '
+    BEGIN {
+      n_bios = split(bios_sets, names, " ")
+      for (i = 1; i <= n_bios; i++) listed[names[i]] = 1
+    }
+    section < 2 && $0 == "\035" { section = 1; next }
+    section < 2 && $0 == "\034" { section = 2; next }
+    section < 2 {
+      # First source wins, so a title of your own decides for the database.
+      if (NF >= 2 && !($1 in title)) {
+        title[$1] = $2
+        if (section == 0) own[$1] = 1
+        low = tolower($2)
+        if (low ~ /bios\)?$/ || low ~ /internal p?rom$/) bios[$1] = 1
+      }
       next
     }
     {
@@ -296,6 +326,7 @@ build_menu_lines() {
       sub(/.*\//, "", base)
       rom = base
       sub(/\.[^.]*$/, "", rom)
+      if ((rom in bios) || ((rom in listed) && !(rom in own))) next
       label = (rom in title) ? title[rom] : rom
 
       n++
@@ -851,12 +882,17 @@ controls_preset() {
 }
 
 # What a control is bound to right now: the arcade profile first, then the
-# RetroArch config it was copied from, then RetroArch's own default.
+# RetroArch config it was copied from, then RetroArch's own default -- which is
+# the RetroArch layout, so a setup nobody has touched reads as that layout
+# rather than as a column of blanks.
 control_value() {
-  local file="$1" id="$2" key value
+  local file="$1" id="$2" key value entry
   key="$(control_key "$id")" || return 0
   value="$(cfg_get "$file" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
   value="$(cfg_get "$RETROARCH_MAIN_CONFIG" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
+  for entry in "${PRESET_RETROARCH[@]}"; do
+    [[ "${entry%%|*}" == "$id" ]] && { printf '%s\n' "${entry#*|}"; return 0; }
+  done
   printf '\n'
 }
 

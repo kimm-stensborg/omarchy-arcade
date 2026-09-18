@@ -320,7 +320,7 @@ function describeSource(row) {
   if (row.source === "retroarch") return "from your RetroArch config"
   if (row.source === "env") return "from the environment"
   if (row.source === "auto") return row.value ? "autodetected" : "nothing found"
-  return "default"
+  return row.kind === "bind" ? "RetroArch's default" : "default"
 }
 
 // What a row shows when it holds nothing: an empty CORE_PATH is a decision
