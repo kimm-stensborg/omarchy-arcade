@@ -262,6 +262,8 @@ rebuild_cache() {
 
 cache_is_stale() {
   [[ ! -s "$CACHE_FILE" ]] && return 0
+  # Caches from before 1.4 hold only titles; the panel wants year and maker.
+  head -n1 -- "$CACHE_FILE" | awk -F'\t' '{ exit (NF >= 4) }' && return 0
 
   local db
   for db in /usr/share/libretro/database/rdb/*.rdb \
@@ -330,10 +332,10 @@ readonly BIOS_SETS=(
 # BIOS sets are left out; a title of your own in arcade-titles.tsv that does
 # not end in "BIOS" brings one back.
 #
-# Three more columns ride along for the panel: when the game was last played
-# (an epoch, empty if never), "playing" for the one running right now, and the
-# database's own title, which may differ from the one shown. A dmenu only
-# ever sees the first.
+# More columns ride along for the panel: when the game was last played (an
+# epoch, empty if never), "playing" for the one running right now, the
+# database's own title (which may differ from the one shown), and its year and
+# maker. A dmenu only ever sees the first.
 build_menu_lines() {
   local playing=""
   playing="$(running_game | cut -f2)"
@@ -359,7 +361,7 @@ build_menu_lines() {
     section < 2 && $0 == "\037" { database = 1; next }
     section < 2 && $0 == "\034" { section = 2; next }
     section < 2 {
-      if (database && NF >= 2 && !($1 in dbtitle)) dbtitle[$1] = $2
+      if (database && NF >= 2 && !($1 in dbtitle)) { dbtitle[$1] = $2; dbyear[$1] = $3; dbmaker[$1] = $4 }
       # First source wins, so a title of your own decides for the database.
       if (NF >= 2 && !($1 in title)) {
         title[$1] = $2
@@ -391,8 +393,8 @@ build_menu_lines() {
         # Two ROMs can share a title (a parent and its clone). Tag both with the
         # ROM name so the menu stays unambiguous and the right file gets launched.
         label = (seen[labels[i]] > 1) ? labels[i] " (" roms[i] ")" : labels[i]
-        printf "%s\t%s\t%s\t%s\t%s\n", label, paths[i], played[paths[i]], \
-          (paths[i] == playing ? "playing" : ""), dbtitle[roms[i]]
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", label, paths[i], played[paths[i]], \
+          (paths[i] == playing ? "playing" : ""), dbtitle[roms[i]], dbyear[roms[i]], dbmaker[roms[i]]
       }
     }
   ' | sort -f -t $'\t' -k1,1
@@ -825,7 +827,7 @@ $PROGRAM $VERSION - arcade quick-launcher for RetroArch
 Usage:
   $PROGRAM                  Show the menu and launch the selected game
   $PROGRAM <romname>        Launch a game directly, e.g. "$PROGRAM bublbobl"
-  $PROGRAM --list           Print "title<TAB>path<TAB>played<TAB>playing<TAB>db title" per ROM
+  $PROGRAM --list           Print "title<TAB>path<TAB>played<TAB>playing<TAB>db title<TAB>year<TAB>maker"
   $PROGRAM --doctor         Check the setup and print what is missing
   $PROGRAM --rebuild-titles Rebuild the title cache from the libretro databases
   $PROGRAM --config         Print the resolved configuration

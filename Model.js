@@ -5,8 +5,9 @@
 // panel makes. None of it needs a running shell, so all of it is tested by
 // test.js.
 
-// "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing<TAB>database title"
-// per line, exactly what --list prints; the last three may be empty or absent. Lines without a
+// "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing<TAB>database title
+// <TAB>year<TAB>maker" per line, exactly what --list prints; all but the first
+// two may be empty or absent. Lines without a
 // tab are ignored rather than guessed at: a half-parsed row would launch the
 // wrong file.
 function parseList(text) {
@@ -27,7 +28,9 @@ function parseList(text) {
       title: title, path: path, rom: romName(path),
       lastPlayed: isNaN(played) ? 0 : played,
       playing: parts[3] === "playing",
-      dbTitle: parts[4] || ""
+      dbTitle: parts[4] || "",
+      year: parts[5] || "",
+      maker: parts[6] || ""
     })
   }
   return games
@@ -174,6 +177,81 @@ function wallGames(games, limit) {
     if (!lead[k]) out.push(list[k])
   }
   return out
+}
+
+// How many games lead the wall as recently played: the shelf above it.
+function recentCount(games, limit) {
+  var cap = Math.max(0, limit | 0)
+  var played = 0
+  var list = games || []
+  for (var i = 0; i < list.length; i++) if (list[i].lastPlayed > 0) played++
+  return Math.min(cap, played)
+}
+
+// Where the selection goes. The first `recent` games sit on a shelf of their
+// own above the wall, so up from the wall's first row lands on the shelf, and
+// down from the shelf lands on the wall's first row, in the nearest column.
+// Left and right simply run on through the list.
+function wallMove(index, action, columns, recent, total) {
+  if (total <= 0) return 0
+  var cols = Math.max(1, columns | 0)
+  var shelf = Math.max(0, Math.min(recent | 0, total))
+  var wall = total - shelf
+  var at = clampIndex(index, total)
+
+  if (action === "left") return clampIndex(at - 1, total)
+  if (action === "right") return clampIndex(at + 1, total)
+  if (action === "page-down") return wallMove(wallMove(at, "down", cols, shelf, total), "down", cols, shelf, total)
+  if (action === "page-up") return wallMove(wallMove(at, "up", cols, shelf, total), "up", cols, shelf, total)
+
+  if (at < shelf) {
+    if (action === "down") return wall > 0 ? shelf + Math.min(at, wall - 1) : at
+    return at
+  }
+  var place = at - shelf
+  if (action === "up") {
+    if (place >= cols) return at - cols
+    return shelf > 0 ? Math.min(place, shelf - 1) : at
+  }
+  if (action === "down") {
+    // Down from the next-to-last row lands on the last one even when it is
+    // short, rather than refusing because the column below is empty.
+    if (place + cols < wall) return at + cols
+    return Math.floor(place / cols) < Math.floor((wall - 1) / cols) ? total - 1 : at
+  }
+  return at
+}
+
+// The line under the selected game's name: who made it and when, how many
+// versions there are, and when it was last played.
+function gameFacts(game, now) {
+  if (!game) return ""
+  var facts = []
+  if (game.maker) facts.push(game.maker)
+  if (game.year) facts.push(game.year)
+  if (versionCount(game) > 1) facts.push(versionCount(game) + " versions")
+  if (game.playing) facts.push("playing now")
+  else if (game.lastPlayed) facts.push("played " + playedAgo(game.lastPlayed, now))
+  if (game.path) facts.push(String(game.path).replace(/^.*\//, ""))
+  return facts.join("  ·  ")
+}
+
+// The controls at the foot of the wall, as keycaps and what they do. They
+// speak whichever was used last -- keyboard or stick -- and only mention
+// versions when the selected game has some.
+function wallHints(stick, versions) {
+  if (stick) {
+    var out = [{ keys: ["B"], label: "Play" }]
+    if (versions) out.push({ keys: ["Y", "X"], label: "Version" })
+    out.push({ keys: ["−"], label: "Settings" })
+    out.push({ keys: ["Home"], label: "Close" })
+    return out
+  }
+  var keys = [{ keys: ["Enter"], label: "Play" }]
+  if (versions) keys.push({ keys: ["Tab"], label: "Version" })
+  keys.push({ keys: ["Ctrl", ","], label: "Settings" })
+  keys.push({ keys: ["Esc"], label: "Close" })
+  return keys
 }
 
 // "2 hours ago", for the line under a tile. Coarse on purpose: when you last

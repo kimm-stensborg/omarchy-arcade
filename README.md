@@ -89,13 +89,22 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 
 ## The wall
 
-With nothing typed, the games you last played lead the wall, newest first, so
-opening it and pressing `Enter` puts you back in the last game. There is at most
-one row of them (`RECENT_GAMES`, `0` turns it off); the rest of the library
-follows alphabetically, and no game appears twice. Under each tile is when you
-last played it. The first time the panel opens after an upgrade, the history
-is built from the launch headers already in `arcade.log`. After that it is kept
-in `~/.local/state/omarchy/arcade-history.tsv`.
+With nothing typed, the games you last played sit on a **Continue playing**
+shelf above the rest, newest first. Opening the panel and pressing `Enter`
+therefore puts you back in the last game. The shelf holds at most one row
+(`RECENT_GAMES`, `0` turns it off) and stays put while **All games** scrolls
+underneath, alphabetically, with no game appearing twice. Up from the wall's
+first row lands on the shelf, and down from the shelf lands back on the wall
+in the same column. The first time the panel opens after an upgrade, the
+history is built from the launch headers already in `arcade.log`. After that
+it is kept in `~/.local/state/omarchy/arcade-history.tsv`.
+
+The selected game lifts out of the wall with a glow, and its title screen,
+blurred, lights the whole screen behind the panel. The bar along the bottom
+names it, with its maker and year from the libretro database, how many versions
+there are, when you last played it, and its file. The keys to press are
+alongside as keycaps, and switch to the stick's buttons when the stick was
+the last thing used.
 
 One game runs at a time. The one running is marked **PLAYING**, and the
 footer says what `Enter` will do before you press it: on that game it brings it
@@ -213,7 +222,7 @@ copyright holders.
 Three sources, first hit wins:
 
 1. **`~/.config/omarchy/arcade-titles.tsv`** — your overrides, `romname<TAB>Title`.
-2. **`~/.cache/omarchy/arcade-titles.cache.tsv`** — generated from the libretro
+2. **`~/.cache/omarchy/arcade-titles.cache.tsv`** — `rom<TAB>title<TAB>year<TAB>maker`, generated from the libretro
    databases in `/usr/share/libretro/database/rdb/` (~46k entries across FBNeo
    and the MAME sets). Built on first run, refreshed whenever a database file
    is newer than the cache.
@@ -444,7 +453,7 @@ by itself — from a terminal, a script, or a plain Hyprland install with no
 ```bash
 arcade-launcher                  # wofi/rofi/fuzzel menu, then launch
 arcade-launcher bublbobl         # launch directly by ROM name
-arcade-launcher --list           # "title<TAB>path<TAB>played<TAB>playing<TAB>db title" per ROM
+arcade-launcher --list           # title, path, played, playing, db title, year, maker per ROM
 arcade-launcher --doctor         # check the setup
 arcade-launcher --rebuild-titles # refresh the cache
 arcade-launcher --settings       # every setting, its value and where it came from

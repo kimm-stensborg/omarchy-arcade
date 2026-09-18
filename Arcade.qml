@@ -2,6 +2,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -76,10 +77,17 @@ Item {
   readonly property bool groupVersions: String((root.settingsParsed.values.GROUP_VERSIONS || {}).value || "on") !== "off"
   // group -> path of the version Tab last picked, for this open of the panel.
   property var pickedVersions: ({})
-  readonly property var rows: root.filterText.trim().length > 0
+  readonly property bool searching: root.filterText.trim().length > 0
+  readonly property var wallSource: root.groupVersions ? Model.groupGames(root.games, root.pickedVersions) : root.games
+  readonly property var rows: root.searching
     ? Model.filterGames(root.games, root.filterText)
-    : Model.wallGames(root.groupVersions ? Model.groupGames(root.games, root.pickedVersions) : root.games,
-                      root.recentLimit)
+    : Model.wallGames(root.wallSource, root.recentLimit)
+  // The first this many rows sit on the "continue playing" shelf.
+  readonly property int shelfCount: root.searching ? 0 : Model.recentCount(root.wallSource, root.recentLimit)
+  // The selected game's title screen, blurred behind everything. It follows
+  // the selection a beat late, so holding the lever does not decode a
+  // picture for every tile it passes.
+  property string backdrop: ""
   // The game RetroArch is running right now, if the launcher started one.
   readonly property var playing: Model.playingGame(root.games)
   // Seconds since the epoch as of this open, for "2 hours ago". Taken once:
@@ -89,6 +97,10 @@ Item {
     ? root.rows[root.selectedIndex]
     : null
   readonly property bool hasProblem: root.problemReport.length > 0
+  // The wall's own foot: the selected game's name, its facts, and keycaps.
+  // The settings, the stick test and a setup problem keep the plain footer.
+  readonly property bool infoBarShown: !root.settingsOpen && !root.padTesting && !root.hasProblem
+    && root.rows.length > 0
   // Said in the footer before Enter is pressed, when a game is already running.
   readonly property string launchNote: Model.launchNote(root.selected, root.playing)
 
@@ -107,6 +119,8 @@ Item {
   // Arcade art is a CRT picture: it wants a black surround in any theme, the
   // way a cabinet bezel does.
   readonly property color artWell: "#07070b"
+  // Slightly see-through, so the selected game's glow reaches the panel.
+  readonly property color cardColor: Util.alpha(root.background, 0.9)
   readonly property int cornerRadius: Style.cornerRadius
   readonly property string fontFamily: Style.font.menuFamily
   // The panel is mostly artwork, so it gets room to breathe: a tight margin
@@ -114,7 +128,7 @@ Item {
   readonly property int contentMargin: Math.max(Style.spacing.panelPadding, Style.space(20))
   readonly property int contentSpacing: Math.max(Style.spacing.md, Style.space(14))
   readonly property int headerHeight: Math.max(Style.space(44), Style.font.title + Style.spacing.controlPaddingY * 2)
-  readonly property int footerHeight: Math.max(Style.space(60), Style.font.heading + Style.font.caption + Style.space(18))
+  readonly property int footerHeight: Math.max(Style.space(76), Math.round(Style.font.title * 1.5) + Style.font.caption + Style.space(26))
 
   // One editor, two files: arcade.conf decides what the panel does, the arcade
   // RetroArch profile decides what the cabinet's buttons do.
@@ -339,12 +353,7 @@ Item {
       return
     }
     if (action === "play") { root.activate(); return }
-    if (action === "left") root.moveBy(-1)
-    else if (action === "right") root.moveBy(1)
-    else if (action === "up") root.moveBy(-root.columns)
-    else if (action === "down") root.moveBy(root.columns)
-    else if (action === "page-up") root.moveBy(-root.columns * 2)
-    else if (action === "page-down") root.moveBy(root.columns * 2)
+    if (["left", "right", "up", "down", "page-up", "page-down"].indexOf(action) >= 0) root.move(action)
     else if ((action === "version-prev" || action === "version-next")
              && root.selected && Model.versionCount(root.selected) > 1)
       root.pickedVersions = Model.stepVersion(root.pickedVersions, root.selected,
@@ -557,15 +566,21 @@ Item {
 
   // ------------------------------------------------------------- navigation
 
-  function moveBy(delta) {
+  // up, down, left, right, page-up, page-down -- across the shelf and the
+  // wall as one; see Model.wallMove.
+  function move(action) {
     if (root.rows.length === 0) return
     pointerGate.reset()
-    root.setSelected(Model.gridTarget(root.selectedIndex, delta, root.rows.length))
+    root.setSelected(Model.wallMove(root.selectedIndex, action, root.columns, root.shelfCount, root.rows.length))
   }
 
   function setSelected(index) {
     root.selectedIndex = Model.clampIndex(index, root.rows.length)
-    Qt.callLater(function() { grid.positionViewAtIndex(root.selectedIndex, GridView.Contain) })
+    // The shelf never scrolls; only a game on the wall needs bringing into view.
+    Qt.callLater(function() {
+      if (root.selectedIndex >= root.shelfCount)
+        grid.positionViewAtIndex(root.selectedIndex - root.shelfCount, GridView.Contain)
+    })
   }
 
   function setFilter(next) {
@@ -703,6 +718,14 @@ Item {
     }
   }
 
+  Timer {
+    id: backdropTimer
+    interval: 140
+    onTriggered: root.backdrop = Model.artFor(root.artMap, root.selected)
+  }
+  onSelectedChanged: backdropTimer.restart()
+  onArtMapChanged: if (!root.backdrop) backdropTimer.restart()
+
   // A held lever keeps moving: a pause, then a steady step.
   Timer {
     id: stickRepeat
@@ -793,6 +816,171 @@ Item {
     referenceItem: card
   }
 
+  // ------------------------------------------------------------------ a tile
+  //
+  // One game: its title screen, its name, and a word about it when there is
+  // one worth saying. The shelf and the wall both draw these; the Loader that
+  // places one says which game it is.
+  Component {
+    id: gameTile
+
+    Item {
+      id: tile
+      readonly property int index: parent ? parent.tileIndex : -1
+      readonly property var entry: index >= 0 && index < root.rows.length ? root.rows[index] : null
+      readonly property bool active: index === root.selectedIndex
+      readonly property string art: Model.artFor(root.artMap, entry)
+      readonly property bool pending: Model.artPending(root.artMap, entry)
+      readonly property string note: Model.tileNote(entry, root.now)
+
+      Item {
+        anchors.fill: parent
+        anchors.margins: Math.round(root.tileSpacing / 2)
+
+        // The selected tile lifts out of the wall and glows, the way a lit
+        // cabinet does in a dark arcade; the rest step back a little.
+        scale: tile.active ? 1.05 : 1
+        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        RectangularShadow {
+          anchors.fill: frame
+          radius: frame.radius
+          blur: Style.space(28)
+          spread: Style.space(2)
+          color: Util.alpha(root.accent, 0.55)
+          opacity: tile.active ? 1 : 0
+          Behavior on opacity { NumberAnimation { duration: 140 } }
+        }
+
+        Rectangle {
+          id: frame
+          anchors.fill: parent
+          radius: root.cornerRadius
+          color: tile.active ? Util.alpha(root.accent, 0.16) : root.tileSurface
+          border.width: tile.active ? Math.max(2, Style.space(2)) : Math.max(1, Style.space(1))
+          border.color: tile.active ? root.accent : root.tileBorder
+          Behavior on color { ColorAnimation { duration: 140 } }
+          Behavior on border.color { ColorAnimation { duration: 140 } }
+
+          Column {
+            anchors.fill: parent
+            anchors.margins: Style.space(6)
+            spacing: Style.space(6)
+
+            // ---- artwork
+            Rectangle {
+              id: well
+              width: parent.width
+              height: Math.round(width * 0.75)
+              radius: Math.max(2, root.cornerRadius - Style.space(3))
+              color: root.artWell
+              clip: true
+
+              Image {
+                anchors.fill: parent
+                anchors.margins: 1
+                source: tile.art ? "file://" + tile.art : ""
+                visible: tile.art.length > 0 && status === Image.Ready
+                fillMode: Image.PreserveAspectFit
+                // Arcade art is 224 lines tall. Smoothing it into a 200px
+                // tile turns a title screen into a smear; nearest-neighbour
+                // keeps the pixels it was drawn in.
+                smooth: false
+                mipmap: false
+                asynchronous: true
+                cache: true
+                sourceSize.width: 640
+                opacity: tile.active ? 1 : 0.8
+                Behavior on opacity { NumberAnimation { duration: 140 } }
+              }
+
+              // The game on screen right now, marked on its own art so it is
+              // found at a glance on a wall of title screens.
+              Rectangle {
+                visible: !!(tile.entry && tile.entry.playing)
+                z: 2
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.margins: Style.space(8)
+                height: Style.font.caption + Style.space(8)
+                width: playingText.implicitWidth + Style.space(14)
+                radius: height / 2
+                color: root.accent
+
+                Text {
+                  id: playingText
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: "PLAYING"
+                  color: root.artWell
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: Style.space(1)
+                }
+              }
+
+              // No artwork, or none yet: the game's initials set like a
+              // marquee, which beats an empty black rectangle.
+              Text {
+                anchors.centerIn: parent
+                visible: tile.art.length === 0
+                textFormat: Text.PlainText
+                text: Model.initials(tile.entry ? tile.entry.title : "")
+                color: Util.alpha(root.foreground, tile.pending ? 0.28 : 0.42)
+                font.family: root.fontFamily
+                font.pixelSize: Math.round(well.height * 0.34)
+                font.letterSpacing: Style.space(2)
+                font.bold: true
+
+                SequentialAnimation on opacity {
+                  running: tile.pending && root.opened
+                  loops: Animation.Infinite
+                  NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutQuad }
+                  NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
+                }
+              }
+            }
+
+            // ---- the name, and a word about it
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: tile.entry ? tile.entry.title : ""
+              color: tile.active ? root.accent : root.foreground
+              opacity: tile.active ? 1 : 0.88
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: tile.active
+              elide: Text.ElideRight
+            }
+
+            Text {
+              width: parent.width
+              textFormat: Text.PlainText
+              text: tile.note || " "
+              color: tile.entry && tile.entry.playing ? root.accent : root.foreground
+              opacity: tile.entry && tile.entry.playing ? 0.9 : 0.45
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+            }
+          }
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          onEntered: if (pointerGate.moved) root.setSelected(tile.index)
+          onClicked: {
+            root.setSelected(tile.index)
+            root.activate()
+          }
+        }
+      }
+    }
+  }
+
   // ------------------------------------------------------------------- view
 
   PanelWindow {
@@ -805,9 +993,41 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
+    // The selected game's title screen, blurred across the whole screen and
+    // pushed well back: the room lit by the cabinet you are standing at.
+    Image {
+      id: backdropArt
+      anchors.fill: parent
+      source: root.backdrop ? "file://" + root.backdrop : ""
+      fillMode: Image.PreserveAspectCrop
+      sourceSize.width: 320
+      asynchronous: true
+      retainWhileLoading: true
+      visible: false
+    }
+
+    MultiEffect {
+      anchors.fill: parent
+      source: backdropArt
+      autoPaddingEnabled: false
+      blurEnabled: true
+      blur: 1.0
+      blurMax: 64
+      saturation: 0.1
+      brightness: -0.2
+      opacity: backdropArt.status === Image.Ready && root.backdrop ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: 260 } }
+    }
+
     Rectangle {
       anchors.fill: parent
       color: root.scrim
+    }
+
+    // The scrim alone lets the desktop through; the arcade wants the room dark.
+    Rectangle {
+      anchors.fill: parent
+      color: Util.alpha("#000000", 0.45)
     }
 
     MouseArea {
@@ -821,7 +1041,7 @@ Item {
       height: root.cardHeight
       radius: root.cornerRadius
       anchors.centerIn: parent
-      color: root.background
+      color: root.cardColor
       borderSpec: root.borderSpec
       padding: root.contentMargin
 
@@ -865,22 +1085,22 @@ Item {
             root.activate()
             event.accepted = true
           } else if (event.key === Qt.Key_Right || (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier))) {
-            root.moveBy(1)
+            root.move("right")
             event.accepted = true
           } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
-            root.moveBy(-1)
+            root.move("left")
             event.accepted = true
           } else if (event.key === Qt.Key_Down) {
-            root.moveBy(root.columns)
+            root.move("down")
             event.accepted = true
           } else if (event.key === Qt.Key_Up) {
-            root.moveBy(-root.columns)
+            root.move("up")
             event.accepted = true
           } else if (event.key === Qt.Key_PageDown) {
-            root.moveBy(root.columns * 2)
+            root.move("page-down")
             event.accepted = true
           } else if (event.key === Qt.Key_PageUp) {
-            root.moveBy(-root.columns * 2)
+            root.move("page-up")
             event.accepted = true
           } else if (event.key === Qt.Key_Home) {
             root.setSelected(0)
@@ -1079,208 +1299,113 @@ Item {
             width: parent.width
             height: parent.height - root.headerHeight - root.footerHeight - root.contentSpacing * 2
 
-            // The wall.
-            GridView {
-              id: grid
+            // The wall: games you played lately on a shelf of their own, then
+            // the whole library below it. The shelf stays put while the
+            // library scrolls, so "continue where I was" is always one move
+            // up.
+            Item {
+              id: wall
               anchors.fill: parent
               visible: !root.settingsOpen && !root.hasProblem && root.rows.length > 0
-              model: root.rows.length
-              cellWidth: root.cellWidth
-              cellHeight: root.cellHeight
-              clip: true
-              boundsBehavior: Flickable.StopAtBounds
-              cacheBuffer: root.cellHeight * 3
 
-              delegate: Item {
-                id: tile
-                required property int index
-                readonly property var entry: root.rows[index]
-                readonly property bool active: index === root.selectedIndex
-                readonly property string art: Model.artFor(root.artMap, entry)
-                readonly property bool pending: Model.artPending(root.artMap, entry)
+              Text {
+                id: shelfLabel
+                visible: root.shelfCount > 0
+                height: root.shelfCount > 0 ? Style.font.caption + Style.space(4) : 0
+                textFormat: Text.PlainText
+                text: "CONTINUE PLAYING"
+                color: root.foreground
+                opacity: 0.45
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: Style.space(2)
+              }
 
-                width: grid.cellWidth
-                height: grid.cellHeight
-                z: active ? 2 : 1
-
-                Item {
-                  anchors.fill: parent
-                  anchors.margins: Math.round(root.tileSpacing / 2)
-
-                  // The selected tile lifts out of the wall rather than merely
-                  // changing colour: at this size a border alone is easy to
-                  // lose track of while arrowing around.
-                  scale: tile.active ? 1.04 : 1
-                  Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-
-                  // A halo around the selection, so the accent border reads as
-                  // a lit cabinet rather than a hairline.
-                  Rectangle {
-                    anchors.fill: frame
-                    anchors.margins: -Math.round(root.tileSpacing / 3)
-                    radius: root.cornerRadius + Style.space(3)
-                    color: "transparent"
-                    border.width: Math.max(1, Style.space(2))
-                    border.color: Util.alpha(root.accent, 0.45)
-                    opacity: tile.active ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 130 } }
-                  }
-
-                  Rectangle {
-                    id: frame
-                    anchors.fill: parent
-                    radius: root.cornerRadius
-                    color: tile.active ? Util.alpha(root.accent, 0.14) : root.tileSurface
-                    border.width: tile.active ? Math.max(2, Style.space(3)) : Math.max(1, Style.space(1))
-                    border.color: tile.active ? root.accent : root.tileBorder
-                    Behavior on color { ColorAnimation { duration: 130 } }
-                    Behavior on border.color { ColorAnimation { duration: 130 } }
-
-                    Column {
-                      anchors.fill: parent
-                      anchors.margins: Style.space(6)
-                      spacing: Style.space(6)
-
-                      // ---- artwork
-                      Rectangle {
-                        id: well
-                        width: parent.width
-                        height: Math.round(width * 0.75)
-                        radius: Math.max(2, root.cornerRadius - Style.space(3))
-                        color: root.artWell
-                        clip: true
-
-                        Image {
-                          anchors.fill: parent
-                          anchors.margins: 1
-                          source: tile.art ? "file://" + tile.art : ""
-                          visible: tile.art.length > 0 && status === Image.Ready
-                          fillMode: Image.PreserveAspectFit
-                          // Arcade art is 224 lines tall. Smoothing it into a
-                          // 200px tile turns a title screen into a smear;
-                          // nearest-neighbour keeps the pixels it was drawn in.
-                          smooth: false
-                          mipmap: false
-                          asynchronous: true
-                          cache: true
-                          sourceSize.width: 640
-                        }
-
-                        // The game on screen right now, marked on its own art
-                        // so it is found at a glance on a wall of title screens.
-                        Rectangle {
-                          visible: tile.entry && tile.entry.playing
-                          z: 2
-                          anchors.left: parent.left
-                          anchors.top: parent.top
-                          anchors.margins: Style.space(8)
-                          height: Style.font.caption + Style.space(8)
-                          width: playingText.implicitWidth + Style.space(14)
-                          radius: height / 2
-                          color: root.accent
-
-                          Text {
-                            id: playingText
-                            anchors.centerIn: parent
-                            textFormat: Text.PlainText
-                            text: "PLAYING"
-                            color: root.artWell
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                            font.letterSpacing: Style.space(1)
-                          }
-                        }
-
-                        // No artwork, or none yet: the game's initials set like
-                        // a marquee, which beats an empty black rectangle.
-                        Text {
-                          anchors.centerIn: parent
-                          visible: tile.art.length === 0
-                          textFormat: Text.PlainText
-                          text: Model.initials(tile.entry ? tile.entry.title : "")
-                          color: Util.alpha(root.foreground, tile.pending ? 0.28 : 0.42)
-                          font.family: root.fontFamily
-                          font.pixelSize: Math.round(well.height * 0.34)
-                          font.letterSpacing: Style.space(2)
-                          font.bold: true
-
-                          SequentialAnimation on opacity {
-                            running: tile.pending && root.opened
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutQuad }
-                            NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
-                          }
-                        }
-                      }
-
-                      // ---- label
-                      Text {
-                        width: parent.width
-                        textFormat: Text.PlainText
-                        text: tile.entry ? tile.entry.title : ""
-                        color: tile.active ? root.accent : root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.body
-                        font.bold: tile.active
-                        elide: Text.ElideRight
-                      }
-
-                      Text {
-                        width: parent.width
-                        textFormat: Text.PlainText
-                        text: tile.entry
-                          ? tile.entry.rom + (Model.tileNote(tile.entry, root.now)
-                                              ? "  ·  " + Model.tileNote(tile.entry, root.now) : "")
-                          : ""
-                        color: tile.entry && tile.entry.playing ? root.accent : root.foreground
-                        opacity: tile.entry && tile.entry.playing ? 0.9 : 0.45
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        elide: Text.ElideRight
-                      }
-                    }
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onEntered: if (pointerGate.moved) root.setSelected(tile.index)
-                    onClicked: {
-                      root.setSelected(tile.index)
-                      root.activate()
-                    }
-                  }
+              ListView {
+                id: shelf
+                anchors.top: shelfLabel.bottom
+                anchors.topMargin: visible ? Style.space(6) : 0
+                width: parent.width
+                height: visible ? root.cellHeight : 0
+                visible: root.shelfCount > 0
+                orientation: ListView.Horizontal
+                interactive: false
+                model: root.shelfCount
+                delegate: Loader {
+                  required property int index
+                  readonly property int tileIndex: index
+                  width: root.cellWidth
+                  height: root.cellHeight
+                  z: tileIndex === root.selectedIndex ? 2 : 1
+                  sourceComponent: gameTile
                 }
               }
-            }
 
-            // A slim indicator instead of a scrollbar: the wall scrolls with
-            // the selection, so this is a hint about how much library is left,
-            // not something to drag.
-            Rectangle {
-              visible: grid.visible && grid.contentHeight > grid.height
-              width: Math.max(2, Style.space(3))
-              radius: width / 2
-              color: Util.alpha(root.foreground, 0.18)
-              anchors.right: parent.right
-              y: grid.visibleArea.yPosition * parent.height
-              height: Math.max(Style.space(24), grid.visibleArea.heightRatio * parent.height)
-              Behavior on y { NumberAnimation { duration: 90 } }
-            }
+              Text {
+                id: wallLabel
+                anchors.top: shelf.bottom
+                anchors.topMargin: visible ? Style.space(10) : 0
+                visible: root.shelfCount > 0
+                height: root.shelfCount > 0 ? Style.font.caption + Style.space(4) : 0
+                textFormat: Text.PlainText
+                text: "ALL GAMES"
+                color: root.foreground
+                opacity: 0.45
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: Style.space(2)
+              }
 
-            // The wall fades out into the footer rather than being sliced off
-            // by it, which is the only cue that there is more below.
-            Rectangle {
-              visible: grid.visible && grid.contentHeight > grid.height
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.bottom: parent.bottom
-              height: Style.space(72)
-              gradient: Gradient {
-                GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 0.55; color: Util.alpha(root.background, 0.75) }
-                GradientStop { position: 1.0; color: root.background }
+              GridView {
+                id: grid
+                anchors.top: wallLabel.bottom
+                anchors.topMargin: wallLabel.visible ? Style.space(6) : 0
+                anchors.bottom: parent.bottom
+                width: parent.width
+                model: Math.max(0, root.rows.length - root.shelfCount)
+                cellWidth: root.cellWidth
+                cellHeight: root.cellHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                cacheBuffer: root.cellHeight * 3
+                delegate: Loader {
+                  required property int index
+                  readonly property int tileIndex: index + root.shelfCount
+                  width: grid.cellWidth
+                  height: grid.cellHeight
+                  z: tileIndex === root.selectedIndex ? 2 : 1
+                  sourceComponent: gameTile
+                }
+              }
+
+              // A slim indicator instead of a scrollbar: the wall scrolls with
+              // the selection, so this is a hint about how much library is
+              // left, not something to drag.
+              Rectangle {
+                visible: grid.contentHeight > grid.height
+                width: Math.max(2, Style.space(3))
+                radius: width / 2
+                color: Util.alpha(root.foreground, 0.18)
+                anchors.right: parent.right
+                y: grid.y + grid.visibleArea.yPosition * grid.height
+                height: Math.max(Style.space(24), grid.visibleArea.heightRatio * grid.height)
+                Behavior on y { NumberAnimation { duration: 90 } }
+              }
+
+              // The wall fades out into the info bar rather than being sliced
+              // off by it, which is the only cue that there is more below.
+              Rectangle {
+                visible: grid.contentHeight > grid.height
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Style.space(56)
+                gradient: Gradient {
+                  GradientStop { position: 0.0; color: "transparent" }
+                  GradientStop { position: 1.0; color: root.cardColor }
+                }
               }
             }
 
@@ -1628,7 +1753,97 @@ Item {
               color: Util.alpha(root.foreground, 0.10)
             }
 
+            // ---- the info bar
             Column {
+              id: infoText
+              visible: root.infoBarShown
+              anchors.left: parent.left
+              anchors.right: keycaps.left
+              anchors.rightMargin: Style.space(20)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: root.statusMessage || (root.selected ? root.selected.title : "")
+                color: root.statusMessage ? root.accent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Math.round(Style.font.title * 1.5)
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: root.launchNote || Model.gameFacts(root.selected, root.now)
+                color: root.launchNote ? root.accent : root.foreground
+                opacity: root.launchNote ? 1 : 0.55
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+            }
+
+            Row {
+              id: keycaps
+              visible: root.infoBarShown
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(18)
+
+              Repeater {
+                model: Model.wallHints(root.stickLast && !!root.controllerParsed.pad,
+                                       Model.versionCount(root.selected) > 1)
+
+                Row {
+                  required property var modelData
+                  spacing: Style.space(6)
+
+                  Repeater {
+                    model: modelData.keys
+
+                    Rectangle {
+                      required property string modelData
+                      anchors.verticalCenter: parent.verticalCenter
+                      height: Style.font.caption + Style.space(10)
+                      width: Math.max(height, capText.implicitWidth + Style.space(12))
+                      radius: Math.max(3, root.cornerRadius / 2)
+                      color: Util.alpha(root.foreground, 0.07)
+                      border.width: Math.max(1, Style.space(1))
+                      border.color: Util.alpha(root.foreground, 0.22)
+
+                      Text {
+                        id: capText
+                        anchors.centerIn: parent
+                        textFormat: Text.PlainText
+                        text: modelData
+                        color: root.foreground
+                        opacity: 0.85
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                      }
+                    }
+                  }
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: modelData.label
+                    color: root.foreground
+                    opacity: 0.55
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
+            }
+
+            // ---- the plain footer: settings, the stick test, setup problems
+            Column {
+              visible: !root.infoBarShown
               anchors.left: parent.left
               anchors.right: hintText.left
               anchors.rightMargin: Style.space(16)
@@ -1686,6 +1901,7 @@ Item {
 
             Text {
               id: hintText
+              visible: !root.infoBarShown
               textFormat: Text.PlainText
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter

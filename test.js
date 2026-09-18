@@ -99,6 +99,36 @@ check("Enter on another replaces it, and says so first",
       M.launchNote(PLAYED[0], PLAYED[2]), "Enter closes Pang and starts this")
 check("with nothing running Enter just plays", M.launchNote(PLAYED[0], null), "")
 
+// -------------------------------------------------------------- the shelf
+
+const PLAYED_META = M.parseList("Bubble Bobble\t/r/bublbobl.zip\t\t\tBubble Bobble (Japan, Ver 0.1)\t1986\tTaito")
+
+check("year and maker are read", [PLAYED_META[0].year, PLAYED_META[0].maker], ["1986", "Taito"])
+check("the shelf holds the games played, up to its size", M.recentCount(PLAYED, 6), 3)
+check("never more than asked", M.recentCount(PLAYED, 2), 2)
+
+// A shelf of 3 over a wall of 10, 4 to a row: 3..6, 7..10, 11..12.
+const mv = (i, a) => M.wallMove(i, a, 4, 3, 13)
+check("down from the shelf lands in the same column of the wall", mv(1, "down"), 4)
+check("up from the wall's first row lands on the shelf, same column", mv(4, "up"), 1)
+check("from past the shelf's end, on its last game", mv(6, "up"), 2)
+check("up the wall a row at a time", mv(9, "up"), 5)
+check("down the wall a row at a time", mv(4, "down"), 8)
+check("down onto a short last row lands on its end", mv(10, "down"), 12)
+check("down from the last row stays", mv(12, "down"), 12)
+check("up from the shelf stays", mv(0, "up"), 0)
+check("right runs from the shelf onto the wall", mv(2, "right"), 3)
+check("left runs back", mv(3, "left"), 2)
+check("a page is two rows", mv(4, "page-down"), 12)
+check("without a shelf, up from the first row stays", M.wallMove(2, "up", 4, 0, 10), 2)
+
+check("the facts line", M.gameFacts(Object.assign({}, PLAYED_META[0], { lastPlayed: 1000 }), 1000 + 7200),
+      "Taito  ·  1986  ·  played 2 hours ago  ·  bublbobl.zip")
+check("keyboard hints", M.wallHints(false, false).map((h) => h.keys.join("+") + " " + h.label),
+      ["Enter Play", "Ctrl+, Settings", "Esc Close"])
+check("stick hints, with versions", M.wallHints(true, true).map((h) => h.keys.join("+") + " " + h.label),
+      ["B Play", "Y+X Version", "− Settings", "Home Close"])
+
 // ----------------------------------------------------------------- versions
 
 const SETS = M.parseList([

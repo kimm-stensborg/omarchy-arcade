@@ -94,9 +94,10 @@ def load_titles(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
-                rom, tab, title = line.rstrip("\n").partition("\t")
-                if tab and rom and title:
-                    titles.setdefault(rom, title)
+                # rom, title, then year and maker, which are not needed here.
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) >= 2 and fields[0] and fields[1]:
+                    titles.setdefault(fields[0], fields[1])
     except OSError:
         pass
     return titles

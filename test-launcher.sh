@@ -131,7 +131,7 @@ check "a missing directory is flagged" \
 # ------------------------------------------------------------------- listing
 
 cache="$XDG_CACHE_HOME/omarchy/arcade-titles.cache.tsv"
-printf '%s\t%s\n' \
+printf '%s\t%s\t\t\n' \
   bublbobl "Bubble Bobble" \
   pgm "PGM (Polygame Master) System BIOS" \
   nmk004 "NMK004 Internal ROM" \
