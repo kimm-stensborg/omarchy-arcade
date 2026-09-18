@@ -5,8 +5,8 @@
 // panel makes. None of it needs a running shell, so all of it is tested by
 // test.js.
 
-// "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing" per line, exactly
-// what --list prints; the last two may be empty or absent. Lines without a
+// "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing<TAB>database title"
+// per line, exactly what --list prints; the last three may be empty or absent. Lines without a
 // tab are ignored rather than guessed at: a half-parsed row would launch the
 // wrong file.
 function parseList(text) {
@@ -26,10 +26,124 @@ function parseList(text) {
     games.push({
       title: title, path: path, rom: romName(path),
       lastPlayed: isNaN(played) ? 0 : played,
-      playing: parts[3] === "playing"
+      playing: parts[3] === "playing",
+      dbTitle: parts[4] || ""
     })
   }
   return games
+}
+
+// ------------------------------------------------------------------ versions
+//
+// A romset library holds the same game several times over: sfiii, sfiiiu and
+// sfiiij are Street Fighter III for Europe, the USA and Japan. There is no
+// parent/clone table on this machine to ask, but the database names every
+// version of a game the same way with its differences in brackets, so the
+// title with the brackets taken off is the game.
+
+function versionKey(game) {
+  if (!game) return ""
+  var title = String(game.dbTitle || "")
+  // No database title means nothing is known about it: it stands alone rather
+  // than being lumped in by a guess.
+  if (!title) return "rom:" + game.rom
+  var base = title
+  var before
+  do {
+    before = base
+    base = base.replace(/\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$/, "")
+  } while (base !== before)
+  // Letters and digits only: MAME's database writes "Nick _ Tom" where
+  // FBNeo's writes "Nick & Tom", and punctuation is no way to tell games apart.
+  base = base.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+  return base ? "title:" + base : "rom:" + game.rom
+}
+
+// Which version stands for the game when nobody has picked one. The parent set
+// has the shortest name nearly always -- sfiii before sfiiiu -- which is also
+// the one most people mean. MAME squeezes names into eight letters, though, so
+// snowbros, snowbroa and snowbroj tie; then a set with a title of its own
+// wins (the shipped titles name parents), then one the database calls
+// "set 1" or "World", then the alphabet.
+function mainVersion(versions) {
+  function rank(v) {
+    var db = String(v.dbTitle || "").toLowerCase()
+    if (v.dbTitle && v.title !== v.dbTitle) return 0
+    if (/\((set 1|world)\b/.test(db)) return 1
+    return 2
+  }
+  var best = null
+  for (var i = 0; i < versions.length; i++) {
+    var v = versions[i]
+    if (!best) { best = v; continue }
+    if (v.rom.length !== best.rom.length) { if (v.rom.length < best.rom.length) best = v; continue }
+    var rv = rank(v), rb = rank(best)
+    if (rv < rb || (rv === rb && v.rom < best.rom)) best = v
+  }
+  return best
+}
+
+// One tile per game. The version a tile stands for is, in order: the one
+// picked with Tab, the one running, the one played last, the main version.
+// Each carries its siblings, main version first, so Tab can step through them.
+function groupGames(games, picked) {
+  var list = games || []
+  var chosen = picked || ({})
+  var order = []
+  var groups = ({})
+
+  for (var i = 0; i < list.length; i++) {
+    var key = versionKey(list[i])
+    if (!groups[key]) { groups[key] = []; order.push(key) }
+    groups[key].push(list[i])
+  }
+
+  var out = []
+  for (var g = 0; g < order.length; g++) {
+    var members = groups[order[g]]
+    var main = mainVersion(members)
+    var versions = [main]
+    for (var m = 0; m < members.length; m++) {
+      if (members[m] !== main) versions.push(members[m])
+    }
+
+    var rep = null
+    for (var a = 0; a < versions.length && !rep; a++) {
+      if (versions[a].path === chosen[order[g]]) rep = versions[a]
+    }
+    for (var b = 0; b < versions.length && !rep; b++) {
+      if (versions[b].playing) rep = versions[b]
+    }
+    if (!rep) {
+      for (var c = 0; c < versions.length; c++) {
+        if (versions[c].lastPlayed > 0 && (!rep || versions[c].lastPlayed > rep.lastPlayed)) rep = versions[c]
+      }
+    }
+    if (!rep) rep = main
+
+    var tile = {}
+    for (var prop in rep) tile[prop] = rep[prop]
+    tile.groupKey = order[g]
+    tile.versions = versions
+    tile.versionIndex = versions.indexOf(rep)
+    out.push(tile)
+  }
+  return out
+}
+
+// The next version of a tile's game, as the new picked map.
+function stepVersion(picked, tile, delta) {
+  var next = {}
+  for (var key in (picked || ({}))) next[key] = picked[key]
+  if (!tile || !tile.versions || tile.versions.length < 2) return next
+  var n = tile.versions.length
+  var at = ((tile.versionIndex + delta) % n + n) % n
+  next[tile.groupKey] = tile.versions[at].path
+  return next
+}
+
+function versionCount(tile) {
+  return tile && tile.versions ? tile.versions.length : 1
 }
 
 // The wall with nothing typed: the games you last played lead it, newest
@@ -85,8 +199,19 @@ function playedAgo(epoch, now) {
 // What the line under a tile says after the ROM name.
 function tileNote(game, now) {
   if (!game) return ""
-  if (game.playing) return "playing now"
-  return playedAgo(game.lastPlayed, now)
+  var notes = []
+  if (versionCount(game) > 1) notes.push((game.versionIndex + 1) + " of " + versionCount(game) + " versions")
+  if (game.playing) notes.push("playing now")
+  else if (game.lastPlayed) notes.push(playedAgo(game.lastPlayed, now))
+  return notes.join("  ·  ")
+}
+
+// The footer's word on a game with several versions, when there is nothing
+// more pressing to say.
+function versionNote(tile) {
+  var n = versionCount(tile)
+  if (n < 2) return ""
+  return n === 2 ? "Tab for the other version" : "Tab for the other " + (n - 1) + " versions"
 }
 
 function playingGame(games) {
@@ -284,7 +409,7 @@ function settingsSchema() {
     { key: "CORE_PATH", label: "libretro core", kind: "path", dynamic: true, group: "Library",
       help: "Leave empty to autodetect FBNeo, then MAME." },
     { key: "RETROARCH_CONFIG", label: "RetroArch config", kind: "path", group: "Library",
-      help: "Optional arcade-only retroarch.cfg — shader, bezel, its own binds." },
+      help: "Optional arcade-only retroarch.cfg — shader, bezel. The arcade binds are layered over it." },
 
     { key: "ARTWORK", label: "Artwork", kind: "choice", options: ["on", "off"], group: "Artwork",
       help: "“off” never touches the network; what is cached keeps showing." },
@@ -297,6 +422,8 @@ function settingsSchema() {
       unit: "px", group: "Panel", help: "How wide a game tile aims to be." },
     { key: "MAX_COLUMNS", label: "Tiles per row", kind: "number", min: 2, max: 12, step: 1,
       group: "Panel", help: "Most tiles the wall will put in one row." },
+    { key: "GROUP_VERSIONS", label: "Versions", kind: "choice", options: ["on", "off"], group: "Panel",
+      help: "“on” shows each game once, however many regional versions you have; Tab switches." },
     { key: "RECENT_GAMES", label: "Recently played", kind: "number", min: 0, max: 12, step: 1,
       group: "Panel", help: "How many recent games lead the wall, never more than a row. 0 turns it off." },
 

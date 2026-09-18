@@ -40,7 +40,7 @@ readonly RETROARCH_BIN="${ARCADE_RETROARCH_BIN:-retroarch}"
 readonly SETTING_KEYS=(
   ROM_DIR ROM_EXTS CORE_PATH RETROARCH_CONFIG
   ARTWORK ART_KINDS ART_DIR
-  TILE_SIZE MAX_COLUMNS RECENT_GAMES
+  TILE_SIZE MAX_COLUMNS RECENT_GAMES GROUP_VERSIONS
   TITLES_FILE CACHE_FILE LOG_FILE MENU_CMD
 )
 
@@ -151,6 +151,7 @@ load_config() {
   : "${TILE_SIZE:=300}"
   : "${MAX_COLUMNS:=6}"
   : "${RECENT_GAMES:=6}"
+  : "${GROUP_VERSIONS:=on}"
   : "${CACHE_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade-titles.cache.tsv}"
   : "${LOG_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade.log}"
   : "${RETROARCH_CONFIG:=}"
@@ -165,6 +166,7 @@ load_config() {
   CORE_PATH="${CORE_PATH/#\~/$HOME}"
 
   [[ -n "${MENU_CMD:-}" ]] || MENU_CMD="$(detect_menu)"
+  migrate_controls
 }
 
 # The arcade cores worth offering, best first: FBNeo is the better fit for
@@ -264,10 +266,15 @@ cache_is_stale() {
 #
 # A \035 line separates your own titles from the rest, so the listing can tell
 # a set you have named yourself from one the database named.
+#
+# A \037 line comes before the database's own titles, which the panel groups
+# the versions of a game by: "Street Fighter III: New Generation (Japan
+# 970204)" and "(USA 970204)" are one game, whatever either is called here.
 title_sources() {
   title_lines "$TITLES_FILE"
   printf '\035\n'
   title_lines "$SHIPPED_TITLES_FILE"
+  printf '\037\n'
   [[ -r "$CACHE_FILE" ]] && cat -- "$CACHE_FILE" || true
 }
 
@@ -312,9 +319,10 @@ readonly BIOS_SETS=(
 # BIOS sets are left out; a title of your own in arcade-titles.tsv that does
 # not end in "BIOS" brings one back.
 #
-# Two more columns ride along for the panel: when the game was last played (an
-# epoch, empty if never) and "playing" for the one running right now. A dmenu
-# only ever sees the first.
+# Three more columns ride along for the panel: when the game was last played
+# (an epoch, empty if never), "playing" for the one running right now, and the
+# database's own title, which may differ from the one shown. A dmenu only
+# ever sees the first.
 build_menu_lines() {
   local playing=""
   playing="$(running_game | cut -f2)"
@@ -337,8 +345,10 @@ build_menu_lines() {
       next
     }
     section < 2 && $0 == "\035" { section = 1; next }
+    section < 2 && $0 == "\037" { database = 1; next }
     section < 2 && $0 == "\034" { section = 2; next }
     section < 2 {
+      if (database && NF >= 2 && !($1 in dbtitle)) dbtitle[$1] = $2
       # First source wins, so a title of your own decides for the database.
       if (NF >= 2 && !($1 in title)) {
         title[$1] = $2
@@ -356,6 +366,8 @@ build_menu_lines() {
       sub(/\.[^.]*$/, "", rom)
       if ((rom in bios) || ((rom in listed) && !(rom in own))) next
       label = (rom in title) ? title[rom] : rom
+      # The MAME database writes "&" as "_", which is not how the game spells it.
+      gsub(/ _ /, " \\& ", label)
 
       n++
       labels[n] = label
@@ -368,8 +380,8 @@ build_menu_lines() {
         # Two ROMs can share a title (a parent and its clone). Tag both with the
         # ROM name so the menu stays unambiguous and the right file gets launched.
         label = (seen[labels[i]] > 1) ? labels[i] " (" roms[i] ")" : labels[i]
-        printf "%s\t%s\t%s\t%s\n", label, paths[i], played[paths[i]], \
-          (paths[i] == playing ? "playing" : "")
+        printf "%s\t%s\t%s\t%s\t%s\n", label, paths[i], played[paths[i]], \
+          (paths[i] == playing ? "playing" : ""), dbtitle[roms[i]]
       }
     }
   ' | sort -f -t $'\t' -k1,1
@@ -404,6 +416,12 @@ launch_rom() {
   fi
 
   [[ -n "$RETROARCH_CONFIG" ]] && cmd+=(--config "$RETROARCH_CONFIG")
+  if [[ -f "$CONTROLS_FILE" ]]; then
+    # A hand edit may have dropped the line that keeps these binds out of
+    # the everyday config; it goes back before RetroArch can save over it.
+    guard_controls_file "$CONTROLS_FILE"
+    cmd+=(--appendconfig "$CONTROLS_FILE")
+  fi
   cmd+=("$rom")
 
   # Omarchy launches graphical apps through uwsm so they get their own scope.
@@ -796,7 +814,7 @@ $PROGRAM $VERSION - arcade quick-launcher for RetroArch
 Usage:
   $PROGRAM                  Show the menu and launch the selected game
   $PROGRAM <romname>        Launch a game directly, e.g. "$PROGRAM bublbobl"
-  $PROGRAM --list           Print "title<TAB>path<TAB>last played<TAB>playing" per ROM
+  $PROGRAM --list           Print "title<TAB>path<TAB>played<TAB>playing<TAB>db title" per ROM
   $PROGRAM --doctor         Check the setup and print what is missing
   $PROGRAM --rebuild-titles Rebuild the title cache from the libretro databases
   $PROGRAM --config         Print the resolved configuration
@@ -825,10 +843,11 @@ Configuration ($CONFIG_FILE, or the environment):
   TILE_SIZE         Overlay only: width a game tile aims for, in pixels
   MAX_COLUMNS       Overlay only: most tiles the wall puts in a row
   RECENT_GAMES      Overlay only: recently played games leading the wall (0 = off)
+  GROUP_VERSIONS    Overlay only: on | off - one tile per game, Tab for its versions
 
-Controls are kept in the arcade-only RetroArch profile RETROARCH_CONFIG names,
-made from a copy of your RetroArch config the first time one is written, so
-your everyday RetroArch keeps its own binds.
+Controls are kept in ~/.config/omarchy/arcade-retroarch.cfg, which RetroArch
+loads on top of its own config for arcade games only (--appendconfig), so your
+everyday RetroArch keeps its own binds and the arcade keeps up with the rest.
 EOF
 }
 
@@ -973,18 +992,23 @@ conf_set() {
 # Controls
 #
 # RetroArch's own binds put "insert coin" on right shift, which is nobody's
-# idea of an arcade cabinet. These read and write an arcade-only retroarch.cfg
-# -- the one RETROARCH_CONFIG names -- so the binds that make a cabinet a
-# cabinet can be changed without touching the RetroArch you use for everything
-# else.
+# idea of an arcade cabinet. These read and write a small file of arcade binds
+# that RetroArch loads on top of its own config with --appendconfig, so the
+# binds that make a cabinet a cabinet change without touching the RetroArch
+# you use for everything else -- and everything else in that RetroArch (the
+# shader, the video driver, the paths) carries on applying to the arcade too.
 # --------------------------------------------------------------------------
 
-readonly DEFAULT_CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/arcade-retroarch.cfg"
+readonly CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/arcade-retroarch.cfg"
 readonly RETROARCH_MAIN_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/retroarch/retroarch.cfg"
 
-controls_file() {
+controls_file() { printf '%s\n' "$CONTROLS_FILE"; }
+
+# The config the binds are layered over: the arcade-only one RETROARCH_CONFIG
+# names, when there is one, otherwise the RetroArch config itself.
+base_config() {
   if [[ -n "$RETROARCH_CONFIG" ]]; then printf '%s\n' "$RETROARCH_CONFIG"
-  else printf '%s\n' "$DEFAULT_CONTROLS_FILE"
+  else printf '%s\n' "$RETROARCH_MAIN_CONFIG"
   fi
 }
 
@@ -1009,33 +1033,55 @@ cfg_get() {
   printf '%s\n' "$line"
 }
 
-# The arcade profile, made if it is not there yet.
+# The binds file, made if it is not there yet: nothing but the binds and one
+# setting that keeps them in it.
 #
-# RetroArch's --config replaces its configuration rather than layering on top
-# of it, so a file holding nothing but binds would also throw away the video
-# driver, the paths and everything else already set up. The profile therefore
-# starts as a copy of the RetroArch config in use, with only the binds changed
-# afterwards -- an arcade cabinet's settings, not a second RetroArch.
+# RetroArch saves its config on exit, and an appended file's values are part
+# of what it saves -- so without this, one arcade session would write the
+# arcade binds into your everyday retroarch.cfg. Appended settings win, so
+# saying "false" here stops that save for arcade sessions only.
 ensure_controls_file() {
   local file
   file="$(controls_file)"
-  if [[ -e "$file" ]]; then printf '%s\n' "$file"; return 0; fi
-
-  mkdir -p "${file%/*}" || die "$EX_NO_CONFIG_DIR" "cannot create ${file%/*}"
-  if [[ -r "$RETROARCH_MAIN_CONFIG" ]]; then
-    cp -- "$RETROARCH_MAIN_CONFIG" "$file" || die "$EX_NO_CONFIG_DIR" "cannot write $file"
-  else
-    : >"$file" || die "$EX_NO_CONFIG_DIR" "cannot write $file"
+  if [[ ! -e "$file" ]]; then
+    mkdir -p "${file%/*}" || die "$EX_NO_CONFIG_DIR" "cannot create ${file%/*}"
+    printf '%s\n' \
+      "# Arcade binds, loaded by RetroArch on top of its own config (--appendconfig)." \
+      "# Written by arcade-launcher and the Arcade panel; edit freely." >"$file" ||
+      die "$EX_NO_CONFIG_DIR" "cannot write $file"
   fi
-
-  # RetroArch rewrites its config on exit by default, which would quietly
-  # replace these binds with whatever the last session ended up with. A cabinet
-  # profile is meant to be exactly what was set here, so it is pinned.
-  cfg_write "$file" config_save_on_exit "false"
-
-  # The profile is only used if RetroArch is told about it.
-  [[ -n "$RETROARCH_CONFIG" ]] || conf_set RETROARCH_CONFIG "$file"
+  guard_controls_file "$file"
   printf '%s\n' "$file"
+}
+
+guard_controls_file() {
+  [[ "$(cfg_get "$1" config_save_on_exit 2>/dev/null)" == "false" ]] || cfg_write "$1" config_save_on_exit "false"
+}
+
+# 1.1.0 kept the binds in a full copy of retroarch.cfg and pointed
+# RETROARCH_CONFIG at it, so a shader or driver changed in RetroArch later
+# never reached the arcade. Such a copy is cut down to the binds, the rest kept
+# beside it as .bak, and RETROARCH_CONFIG handed back -- but only when it names
+# the file this launcher made, never one chosen by hand.
+migrate_controls() {
+  [[ -n "$RETROARCH_CONFIG" && "$RETROARCH_CONFIG" == "$CONTROLS_FILE" ]] || return 0
+  conf_declares RETROARCH_CONFIG || return 0
+
+  local file="$CONTROLS_FILE" keys="config_save_on_exit" entry tmp
+  if [[ -f "$file" ]]; then
+    for entry in "${CONTROLS[@]}"; do keys+=" ${entry#*|}"; done
+    [[ -e "$file.bak" ]] || cp -p -- "$file" "$file.bak" 2>/dev/null || return 0
+    tmp="$(mktemp "$file.XXXXXX")" || return 0
+    awk -v keys="$keys" '
+      BEGIN { n = split(keys, k, " "); for (i = 1; i <= n; i++) keep[k[i]] = 1 }
+      { key = $0; sub(/[ \t]*=.*/, "", key); sub(/^[ \t]*/, "", key) }
+      key in keep { print }
+    ' "$file" >"$tmp" && mv -f "$tmp" "$file" || { rm -f "$tmp"; return 0; }
+  fi
+  conf_set RETROARCH_CONFIG ""
+  RETROARCH_CONFIG=""
+  printf '\n=== %s moved the arcade binds out of a full retroarch.cfg copy (kept as %s) ===\n' \
+    "$(date -Is)" "$file.bak" >>"$LOG_FILE" 2>/dev/null || true
 }
 
 cfg_write() {
@@ -1089,15 +1135,15 @@ controls_preset() {
   printf 'custom\n'
 }
 
-# What a control is bound to right now: the arcade profile first, then the
-# RetroArch config it was copied from, then RetroArch's own default -- which is
+# What a control is bound to right now: the arcade binds first, then the
+# RetroArch config they are layered over, then RetroArch's own default -- which is
 # the RetroArch layout, so a setup nobody has touched reads as that layout
 # rather than as a column of blanks.
 control_value() {
   local file="$1" id="$2" key value entry
   key="$(control_key "$id")" || return 0
   value="$(cfg_get "$file" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
-  value="$(cfg_get "$RETROARCH_MAIN_CONFIG" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
+  value="$(cfg_get "$(base_config)" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
   for entry in "${PRESET_RETROARCH[@]}"; do
     [[ "${entry%%|*}" == "$id" ]] && { printf '%s\n' "${entry#*|}"; return 0; }
   done
@@ -1108,7 +1154,7 @@ control_source() {
   local file="$1" id="$2" key
   key="$(control_key "$id")" || return 0
   if [[ -r "$file" ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$file"; then printf 'file\n'
-  elif [[ -r "$RETROARCH_MAIN_CONFIG" ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$RETROARCH_MAIN_CONFIG"; then printf 'retroarch\n'
+  elif [[ -r "$(base_config)" ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$(base_config)"; then printf 'retroarch\n'
   else printf 'default\n'
   fi
 }

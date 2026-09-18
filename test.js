@@ -99,6 +99,55 @@ check("Enter on another replaces it, and says so first",
       M.launchNote(PLAYED[0], PLAYED[2]), "Enter closes Pang and starts this")
 check("with nothing running Enter just plays", M.launchNote(PLAYED[0], null), "")
 
+// ----------------------------------------------------------------- versions
+
+const SETS = M.parseList([
+  "Pang\t/r/pang.zip\t\t\tPang (World)",
+  "Snow Bros.: Nick & Tom\t/r/snowbros.zip\t\t\tSnow Bros. - Nick & Tom (set 1)",
+  "Snow Bros. - Nick & Tom (Japan)\t/r/snowbroj.zip\t500\t\tSnow Bros. - Nick & Tom (Japan)",
+  "Snow Bros. - Nick & Tom (set 2)\t/r/snowbroa.zip\t\t\tSnow Bros. - Nick & Tom (set 2)",
+  "Street Fighter III: New Generation (Japan 970204)\t/r/sfiiij.zip\t\t\tStreet Fighter III: New Generation (Japan 970204)",
+  "Street Fighter III: New Generation (USA 970204)\t/r/sfiiiu.zip\t\t\tStreet Fighter III: New Generation (USA 970204)",
+  "Super Pang\t/r/spang.zip\t\t\tSuper Pang (World 900914)",
+  "mystery\t/r/mystery.zip\t\t\t",
+  "mystery2\t/r/mystery2.zip\t\t\t",
+].join("\n"))
+
+check("the database title is read", SETS[0].dbTitle, "Pang (World)")
+check("brackets come off to make the game",
+      M.versionKey(SETS[4]), "title:street fighter iii new generation")
+check("the databases' spellings of one title agree",
+      M.versionKey({ rom: "snowbroa", dbTitle: "Snow Bros. - Nick _ Tom (set 2)" }),
+      M.versionKey({ rom: "snowbros", dbTitle: "Snow Bros. - Nick & Tom (set 1)" }))
+check("regional versions are the same game", M.versionKey(SETS[4]), M.versionKey(SETS[5]))
+check("a title of your own does not split a game from its versions",
+      M.versionKey(SETS[1]), M.versionKey(SETS[3]))
+check("different games stay apart", M.versionKey(SETS[0]) !== M.versionKey(SETS[6]), true)
+check("games the database does not know never group", M.versionKey(SETS[7]) !== M.versionKey(SETS[8]), true)
+
+const grouped = M.groupGames(SETS, {})
+const byRom = Object.fromEntries(grouped.map((t) => [t.rom, t]))
+check("one tile per game", grouped.map((t) => t.rom),
+      ["pang", "snowbroj", "sfiiij", "spang", "mystery", "mystery2"])
+check("the version played last stands for it", byRom.snowbroj.versionIndex, 1)
+check("with its siblings, the main version first",
+      byRom.snowbroj.versions.map((v) => v.rom), ["snowbros", "snowbroj", "snowbroa"])
+check("never played, the shortest name is the main version",
+      M.mainVersion(byRom.sfiiij.versions).rom, "sfiiij")
+check("a single version is just a game", M.versionCount(byRom.pang), 1)
+
+const stepped = M.stepVersion({}, byRom.snowbroj, 1)
+check("Tab picks the next version", M.groupGames(SETS, stepped)[1].rom, "snowbroa")
+check("and wraps round", M.groupGames(SETS, M.stepVersion({}, byRom.snowbroj, 2))[1].rom, "snowbros")
+check("the game running wins over the one played last",
+      M.groupGames(SETS.map((g) => g.rom === "snowbroa" ? Object.assign({}, g, { playing: true }) : g), {})[1].rom,
+      "snowbroa")
+
+check("the tile says which version it is", M.tileNote(byRom.snowbroj, 500 + 60),
+      "2 of 3 versions  ·  1 minute ago")
+check("and the footer how to reach the rest", M.versionNote(byRom.snowbroj), "Tab for the other 2 versions")
+check("a game with one version says nothing about it", M.versionNote(byRom.pang), "")
+
 // ----------------------------------------------------------------- matching
 
 check("empty query keeps everything", titles(M.filterGames(games, "")).length, 6)

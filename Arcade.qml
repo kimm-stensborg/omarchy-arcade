@@ -70,9 +70,16 @@ Item {
   // the last game and the alphabet starts right below.
   readonly property int recentLimit: Math.min(root.columns,
     Math.max(0, Model.settingNumber(root.settingsParsed, "RECENT_GAMES", 6)))
+  // Each game once, however many regional versions of it are in the ROM
+  // directory; Tab steps through them. A search shows every version, since
+  // "sfiiij" is typed by someone who wants that one.
+  readonly property bool groupVersions: String((root.settingsParsed.values.GROUP_VERSIONS || {}).value || "on") !== "off"
+  // group -> path of the version Tab last picked, for this open of the panel.
+  property var pickedVersions: ({})
   readonly property var rows: root.filterText.trim().length > 0
     ? Model.filterGames(root.games, root.filterText)
-    : Model.wallGames(root.games, root.recentLimit)
+    : Model.wallGames(root.groupVersions ? Model.groupGames(root.games, root.pickedVersions) : root.games,
+                      root.recentLimit)
   // The game RetroArch is running right now, if the launcher started one.
   readonly property var playing: Model.playingGame(root.games)
   // Seconds since the epoch as of this open, for "2 hours ago". Taken once:
@@ -144,6 +151,7 @@ Item {
 
     root.opened = true
     root.now = Date.now() / 1000
+    root.pickedVersions = ({})
     root.filterText = payload.filter ? String(payload.filter) : ""
     root.selectedIndex = 0
     root.statusMessage = ""
@@ -667,6 +675,13 @@ Item {
           } else if (event.key === Qt.Key_End) {
             root.setSelected(root.rows.length - 1)
             event.accepted = true
+          } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+            // Another version of the same game, in the same tile: the wall
+            // does not move, only what Enter will start.
+            if (root.selected && Model.versionCount(root.selected) > 1)
+              root.pickedVersions = Model.stepVersion(root.pickedVersions, root.selected,
+                                                      event.key === Qt.Key_Backtab ? -1 : 1)
+            event.accepted = true
           } else if (event.key === Qt.Key_F5) {
             // The config file is as likely to have changed as the ROM
             // directory, and a hand edit should not need the panel reopened.
@@ -835,7 +850,9 @@ Item {
                 textFormat: Text.PlainText
                 text: root.settingsOpen ? "Esc goes back"
                   : (root.loading ? "reading library…"
-                  : (root.hasProblem ? "setup needed" : Model.describeCount(root.rows.length, root.games.length)))
+                  : (root.hasProblem ? "setup needed" : (root.filterText.trim().length > 0
+                  ? Model.describeCount(root.rows.length, root.games.length)
+                  : Model.describeCount(root.rows.length, root.rows.length))))
                 color: root.hasProblem && !root.settingsOpen ? root.accent : root.foreground
                 opacity: root.hasProblem && !root.settingsOpen ? 1 : 0.7
                 font.family: root.fontFamily
@@ -1321,7 +1338,8 @@ Item {
                          : ""))
                   : (root.selected
                      ? root.selected.rom + "  ·  "
-                       + (root.launchNote || Model.shortenPath(root.selected.path, root.home))
+                       + (root.launchNote || Model.versionNote(root.selected)
+                          || Model.shortenPath(root.selected.path, root.home))
                      : "")
                 color: (root.settingsOpen
                         && (root.settingsError || root.capturing || Model.describeState(root.settingsRow)))

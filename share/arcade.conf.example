@@ -23,10 +23,10 @@ ROM_DIR="$HOME/Games/roms"
 # an arcade-only profile (CRT shader, bezel, its own input binds) that does not
 # disturb your normal RetroArch setup.
 #
-# The panel's Controls section writes the cabinet binds into this file, and
-# names one here the first time it does -- by default
-# ~/.config/omarchy/arcade-retroarch.cfg, made as a copy of your RetroArch
-# config. Point this at your own profile to have the binds written there.
+# The panel's Controls section keeps the cabinet binds in a file of their own,
+# ~/.config/omarchy/arcade-retroarch.cfg, which RetroArch loads on top of this
+# config (or its own, when this is unset) -- so there is no need to set this
+# just to change the binds.
 #RETROARCH_CONFIG="$HOME/.config/retroarch/arcade.cfg"
 
 # dmenu-style menu command. Leave unset to autodetect wofi, then rofi, then
@@ -73,3 +73,7 @@ ROM_DIR="$HOME/Games/roms"
 # How many recently played games lead the wall when nothing is typed, newest
 # first. Never more than fit in one row; 0 keeps the wall alphabetical. 0-12.
 #RECENT_GAMES="6"
+
+# One tile per game however many regional versions of it are in ROM_DIR, with
+# Tab to step through them. "off" puts every romset on the wall on its own.
+#GROUP_VERSIONS="on"

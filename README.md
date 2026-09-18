@@ -82,6 +82,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `←` `↑` `↓` `→`, `Ctrl+P` `Ctrl+N` | move the selection |
 | `PgUp` `PgDn`, `Home` `End` | jump |
 | `Enter` | launch the selected game, or return to it if it is running |
+| `Tab` `Shift+Tab` | another version of the selected game |
 | `F5` | re-read the ROM directory |
 | `Ctrl+,` | open the settings, controls included |
 | `Esc` | close |
@@ -102,6 +103,25 @@ back to the front, and on any other game it closes the running one and starts
 the new one. RetroArch quits cleanly on the way out, so high scores are saved.
 If you opened RetroArch yourself, it is left alone: the launcher brings it to
 the front and asks you to close it first.
+
+### Versions
+
+A romset library often holds the same game several times: `sfiii`, `sfiiiu`
+and `sfiiij` are Street Fighter III for Europe, the USA and Japan. The wall
+shows each game once and says how many versions it has under the tile.
+`Tab` steps through them in place, and whichever one is showing is the one
+`Enter` starts.
+
+Nothing on the machine records which set is a clone of which, so versions are
+grouped by their database title with the bracketed part removed:
+"Street Fighter III: New Generation (Japan 970204)" and "(USA 970204)" are the
+same game. The version a tile shows is the one you picked with `Tab`, otherwise
+the one running, otherwise the one you played last. Failing all three it is
+the main version: the shortest ROM name (the parent set, nearly always). When
+names are the same length, a set you gave a title of your own wins, then one
+the database calls "set 1" or "World". A search lists every version on its
+own, so typing `sfiiij` finds exactly that one. `GROUP_VERSIONS="off"` shows
+every version on the wall. ROMs the database does not know are never grouped.
 
 ### When a game does not start
 
@@ -217,7 +237,7 @@ in the environment for a single run. See
 | `ROM_DIR` | `~/Games/roms` (searched two levels deep) |
 | `ROM_EXTS` | `zip 7z chd` |
 | `CORE_PATH` | autodetected: FBNeo, then MAME, in `~/.config/retroarch/cores` then `/usr/lib/libretro` |
-| `RETROARCH_CONFIG` | unset — RetroArch's own config. Set it for an arcade-only profile (shader, bezel, input binds) |
+| `RETROARCH_CONFIG` | unset — RetroArch's own config. Set it for an arcade-only one (shader, bezel); the arcade binds are layered over it |
 | `MENU_CMD` | only used outside the shell: `wofi --dmenu`, then `rofi -dmenu`, then `fuzzel --dmenu` |
 | `TITLES_FILE` | `~/.config/omarchy/arcade-titles.tsv` |
 | `CACHE_FILE` | `~/.cache/omarchy/arcade-titles.cache.tsv` |
@@ -228,6 +248,7 @@ in the environment for a single run. See
 | `TILE_SIZE` | `300` — the width a game tile aims for, in pixels (overlay only) |
 | `MAX_COLUMNS` | `6` — most tiles in one row (overlay only) |
 | `RECENT_GAMES` | `6` — recently played games leading the wall, at most one row; `0` is off (overlay only) |
+| `GROUP_VERSIONS` | `on` — one tile per game, `Tab` for its other versions; `off` shows each romset on its own (overlay only) |
 
 ### From the panel
 
@@ -257,7 +278,7 @@ the line rather than writing a default into it. The file remains the source of
 truth, so editing it by hand is still the same thing as editing it here — the
 panel re-reads it every time it opens.
 
-`TILE_SIZE`, `MAX_COLUMNS` and `RECENT_GAMES` are the overlay's own: the launcher does not use
+`TILE_SIZE`, `MAX_COLUMNS`, `RECENT_GAMES` and `GROUP_VERSIONS` are the overlay's own: the launcher does not use
 them, but they live in the same file so there is one place arcade settings are
 kept and one editor for them. Changing any of them re-lays out the wall immediately.
 
@@ -298,18 +319,29 @@ out as `Y X L` over `B A R` — button 1 is the RetroPad's Y.
 
 ### Where the binds live
 
-Not in your RetroArch. The panel writes an arcade-only profile —
-`~/.config/omarchy/arcade-retroarch.cfg` unless `RETROARCH_CONFIG` already
-names one — and points `RETROARCH_CONFIG` at it, so `arcade-launcher` passes it
-to RetroArch with `--config` and your everyday setup keeps its own binds.
+Not in your RetroArch. The panel writes the binds, and only the binds, to
+`~/.config/omarchy/arcade-retroarch.cfg`. `arcade-launcher` hands that file to
+RetroArch with `--appendconfig`, which loads it on top of RetroArch's own
+config for arcade games only. Your everyday setup keeps its own binds, and
+everything else in it — shader, video driver, paths — applies to the arcade
+too, including changes you make later.
 
-`--config` *replaces* RetroArch's configuration rather than layering over it, so
-a profile holding nothing but binds would throw away your video driver, paths
-and everything else. The profile is therefore made as a **copy of your
-RetroArch config**, with only the binds changed afterwards, and
-`config_save_on_exit` pinned to `false` so a session cannot quietly rewrite the
-binds on its way out. Delete the file to start over; the panel rebuilds it from
-your RetroArch config the next time a control is set.
+The file also sets `config_save_on_exit` to `false`. RetroArch saves its
+config when it quits, and appended settings are part of what it saves, so
+without that line one arcade session would write the arcade binds into your
+everyday `retroarch.cfg`. Settings win when appended, so the line switches the
+save off for arcade sessions only. If a hand edit drops the line, the launcher
+puts it back before the next game starts. Delete the file to start over.
+
+`RETROARCH_CONFIG`, if you set it, replaces RetroArch's config for arcade
+games (`--config`), and the binds are layered over that instead.
+
+Version 1.1.0 kept the binds in a full copy of `retroarch.cfg` and pointed
+`RETROARCH_CONFIG` at it, which stopped later RetroArch changes from reaching
+the arcade. The first run after upgrading cuts that copy down to the binds,
+keeps the rest as `arcade-retroarch.cfg.bak`, and removes `RETROARCH_CONFIG`
+again. It only does this when `RETROARCH_CONFIG` names that exact file; one
+you chose yourself is left alone.
 
 The same from a terminal:
 
@@ -319,8 +351,8 @@ arcade-launcher --controls-preset mame      # or retroarch
 arcade-launcher --set-control coin1=num5    # one control; empty = hand it back
 ```
 
-`source` is `file` when the arcade profile binds it, `retroarch` when the bind
-is inherited from your own config. Key names are RetroArch's: `num5` is the 5
+`source` is `file` when the arcade binds file binds it, `retroarch` when the
+bind is inherited from the RetroArch config underneath. Key names are RetroArch's: `num5` is the 5
 on the number row, `keypad5` the one on the keypad, `ctrl` and `shift` the left
 ones, `nul` unbound.
 
@@ -340,7 +372,7 @@ by itself — from a terminal, a script, or a plain Hyprland install with no
 ```bash
 arcade-launcher                  # wofi/rofi/fuzzel menu, then launch
 arcade-launcher bublbobl         # launch directly by ROM name
-arcade-launcher --list           # "title<TAB>path<TAB>last played<TAB>playing" per ROM
+arcade-launcher --list           # "title<TAB>path<TAB>played<TAB>playing<TAB>db title" per ROM
 arcade-launcher --doctor         # check the setup
 arcade-launcher --rebuild-titles # refresh the cache
 arcade-launcher --settings       # every setting, its value and where it came from

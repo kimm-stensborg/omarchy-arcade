@@ -137,13 +137,16 @@ printf '%s\t%s\n' \
   nmk004 "NMK004 Internal ROM" \
   neogeo "Neo Geo" \
   sfiiin "Street Fighter III: New Generation (Asia 970204, NO CD, bios set 1)" \
+  snowbroj "Snow Bros. - Nick _ Tom (Japan)" \
   >"$cache"
 touch "$cache"
-for rom in bublbobl pgm nmk004 neogeo sfiiin mystery; do : >"$HOME/Games/roms/$rom.zip"; done
+for rom in bublbobl pgm nmk004 neogeo sfiiin snowbroj mystery; do : >"$HOME/Games/roms/$rom.zip"; done
 
 list="$("$launcher" --list | cut -f1 | tr '\n' '|')"
 check "games are listed and BIOS sets are not" "$list" \
-  "Bubble Bobble|mystery|Street Fighter III: New Generation (Asia 970204, NO CD, bios set 1)|"
+  "Bubble Bobble|mystery|Snow Bros. - Nick & Tom (Japan)|Street Fighter III: New Generation (Asia 970204, NO CD, bios set 1)|"
+check "the database title rides along for grouping, as written" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /snowbroj/ { print $5 }')" "Snow Bros. - Nick _ Tom (Japan)"
 
 printf 'neogeo\tNeo Geo Test Menu\n' >"$XDG_CONFIG_HOME/omarchy/arcade-titles.tsv"
 check "a title of your own brings a listed BIOS set back" \
@@ -160,10 +163,11 @@ printf 'video_driver = "vulkan"\ninput_exit_emulator = "f10"\n' >"$XDG_CONFIG_HO
 check "a bind in your RetroArch config is read from there" "$(control exit 3)" "retroarch"
 
 "$launcher" --controls-preset mame
-check "a layout makes the arcade profile" "$([[ -f "$profile" ]] && echo yes)" "yes"
-check "copied from your RetroArch config" "$(grep -c '^video_driver = "vulkan"' "$profile")" "1"
-check "which cannot rewrite itself on exit" "$(grep -c '^config_save_on_exit = "false"' "$profile")" "1"
-check "and is what RetroArch will be told to use" "$(setting RETROARCH_CONFIG)" "$profile"
+check "a layout makes the arcade binds file" "$([[ -f "$profile" ]] && echo yes)" "yes"
+check "holding binds, not a copy of your RetroArch config" "$(grep -c '^video_driver' "$profile")" "0"
+check "and the line that keeps them out of your everyday config" \
+  "$(grep -c '^config_save_on_exit = "false"' "$profile")" "1"
+check "RETROARCH_CONFIG is left alone" "$(setting RETROARCH_CONFIG 3)" "default"
 check "the profile matches the layout" "$(control PRESET)" "mame"
 check "coin is 5" "$(control coin1)" "num5"
 check "a bind is written once" "$(grep -c '^input_player1_select' "$profile")" "1"
@@ -178,6 +182,27 @@ check "to RetroArch's default" "$(control coin1)" "rshift"
 
 "$launcher" --set-control nope=x 2>/dev/null
 check "an unknown control is refused" "$?" "64"
+
+# 1.1.0 kept the binds in a full copy of retroarch.cfg and pointed
+# RETROARCH_CONFIG at it.
+cp "$XDG_CONFIG_HOME/retroarch/retroarch.cfg" "$profile"
+printf 'input_player1_select = "num5"\nconfig_save_on_exit = "false"\n' >>"$profile"
+"$launcher" --set RETROARCH_CONFIG="$profile"
+"$launcher" --settings >/dev/null
+check "an old full copy is cut down to the binds" "$(grep -c '^video_driver' "$profile")" "0"
+check "keeping them" "$(control coin1)" "num5"
+check "with the rest set aside, not lost" "$(grep -c '^video_driver = "vulkan"' "$profile.bak")" "1"
+check "and RETROARCH_CONFIG handed back" "$(setting RETROARCH_CONFIG 3)" "default"
+
+own="$sandbox/my-arcade.cfg"
+printf 'video_driver = "gl"\n' >"$own"
+"$launcher" --set RETROARCH_CONFIG="$own"
+"$launcher" --settings >/dev/null
+check "a RETROARCH_CONFIG chosen by hand is kept" "$(setting RETROARCH_CONFIG)" "$own"
+check "and never cut down" "$(cat "$own")" 'video_driver = "gl"'
+check "binds it does not set come from it" \
+  "$(printf 'input_player1_start = "num7"\n' >>"$own"; "$launcher" --set-control start1=; control start1)" "num7"
+"$launcher" --set RETROARCH_CONFIG=
 
 # ------------------------------------------------------------------- artwork
 
@@ -206,6 +231,9 @@ EOF
 check "only a 404 everywhere is recorded as a miss" "$misses" "absent.miss"
 
 # ----------------------------------------------------------------- launching
+
+# The stand-in writes down how it was started.
+sed -i 's|^sleep 30 \& nap=\$!|printf "%s\\n" "$*" >>"'"$sandbox"'/started"\nsleep 30 \& nap=$!|' "$sandbox/bin/fakearch"
 
 # Waits up to five seconds for a condition, since the launch is watched from
 # the side and reports after the launcher has already returned.
@@ -236,6 +264,10 @@ check "the listing says it is playing" \
 sleep 1
 check "a game that started says nothing" "$(cat "$notes")" ""
 
+check "the arcade binds are layered over RetroArch's own config" \
+  "$(grep -c -- "--appendconfig $profile" "$sandbox/started")" "1"
+check "rather than replacing it" "$(grep -c -- "--config" "$sandbox/started")" "0"
+
 "$launcher" good
 check "launching it again starts no second copy" "$(games_running)" "1"
 check "it brings the running one forward" "$(grep -c "pid:$first" "$focused")" "1"
@@ -263,6 +295,12 @@ check "nor the one running" "$([[ -e "$XDG_RUNTIME_DIR/omarchy-arcade.running" ]
 eventually 'grep -q "did not start" "$notes"'
 check "a crash on start is reported too" \
   "$(grep -c "crash did not start. RetroArch closed as soon as it started." "$notes")" "1"
+
+sed -i '/^config_save_on_exit/d' "$profile"
+"$launcher" crash 2>/dev/null
+check "a hand edit that dropped the save guard gets it back before a launch" \
+  "$(grep -c '^config_save_on_exit = "false"' "$profile")" "1"
+sleep 0.5
 
 # One not started by the launcher: yours to close, not the launcher's.
 : >"$notes"
