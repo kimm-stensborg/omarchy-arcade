@@ -11,22 +11,54 @@ launcher="$here/bin/arcade-launcher"
 artwork="$here/bin/arcade-artwork"
 
 sandbox="$(mktemp -d)"
-trap 'rm -rf "$sandbox"' EXIT
+trap 'pkill -f -- "$sandbox" 2>/dev/null; rm -rf "$sandbox"' EXIT
 
 export HOME="$sandbox/home"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_STATE_HOME="$HOME/.local/state"
+export XDG_RUNTIME_DIR="$sandbox/run"
+# A stand-in RetroArch under a name of its own, so a real one you have open is
+# never taken for the tests' -- or closed by them.
+export ARCADE_RETROARCH_BIN=fakearch
 unset ARCADE_CONFIG ROM_DIR ROM_EXTS CORE_PATH RETROARCH_CONFIG MENU_CMD TITLES_FILE \
   CACHE_FILE LOG_FILE ARTWORK ART_KINDS ART_DIR TILE_SIZE MAX_COLUMNS SHIPPED_TITLES_FILE
 
-mkdir -p "$sandbox/bin" "$HOME/Games/roms" "$XDG_CONFIG_HOME/omarchy" "$XDG_CACHE_HOME/omarchy" \
+mkdir -p "$sandbox/bin" "$XDG_RUNTIME_DIR" "$HOME/Games/roms" "$XDG_CONFIG_HOME/omarchy" "$XDG_CACHE_HOME/omarchy" \
   "$XDG_CONFIG_HOME/retroarch/cores"
 # The launcher reports failures on the desktop too; a refusal the tests expect
-# should not pop up there.
-for stub in retroarch notify-send omarchy-notification-send; do
-  printf '#!/bin/sh\nexit 0\n' >"$sandbox/bin/$stub"
-  chmod +x "$sandbox/bin/$stub"
+# should not pop up there, so the notifiers and hyprctl write down what they
+# were asked instead.
+notes="$sandbox/notes"
+focused="$sandbox/focused"
+for stub in notify-send omarchy-notification-send; do
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\n' "$notes" >"$sandbox/bin/$stub"
 done
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\n' "$focused" >"$sandbox/bin/hyprctl"
+# uwsm-app execs its way down to the game, as the real one does.
+printf '#!/bin/sh\n[ "$1" = -- ] && shift\nexec "$@"\n' >"$sandbox/bin/uwsm-app"
+
+# The ROM decides how the game goes: good.zip starts, bad.zip is missing
+# files and leaves RetroArch sitting in its menu the way FBNeo does, and
+# crash.zip takes RetroArch down with it.
+cat >"$sandbox/bin/fakearch" <<'FAKE'
+#!/bin/bash
+sleep 30 & nap=$!
+trap 'echo "[INFO] [Core] Unloading game..."; kill $nap; exit 0' TERM
+case "${*: -1}" in
+  *good.zip) echo "[INFO] [Core] Geometry: 256x224, Aspect: 1.333, FPS: 60.00" ;;
+  *bad.zip)
+    for f in 201-p1.p1 201-s1.s1 201-c1.c1 201-c2.c2; do
+      echo "[libretro ERROR] [FBNeo] ROM at index 0 with name $f and CRC 0x1 is required"
+    done
+    # FBNeo then boots its own "files are missing" screen, which reports a
+    # picture like any game does.
+    echo "[INFO] [Core] Geometry: 640x480, Aspect: 1.333, FPS: 60.00" ;;
+  *crash.zip) kill $nap; exit 1 ;;
+esac
+wait $nap
+FAKE
+chmod +x "$sandbox/bin/"*
 : >"$XDG_CONFIG_HOME/retroarch/cores/fbneo_libretro.so"
 export PATH="$sandbox/bin:$PATH"
 
@@ -172,6 +204,77 @@ print(" ".join(sorted(f for f in os.listdir(d) if f.endswith(".miss"))))
 EOF
 )"
 check "only a 404 everywhere is recorded as a miss" "$misses" "absent.miss"
+
+# ----------------------------------------------------------------- launching
+
+# Waits up to five seconds for a condition, since the launch is watched from
+# the side and reports after the launcher has already returned.
+eventually() {
+  local tries=0
+  until eval "$1"; do
+    ((tries++ < 50)) || return 1
+    sleep 0.1
+  done
+}
+games_running() { pgrep -fc -- "$sandbox/bin/fakearch" || true; }
+running_pid() { cut -f1 "$XDG_RUNTIME_DIR/omarchy-arcade.running" 2>/dev/null; }
+history="$XDG_STATE_HOME/omarchy/arcade-history.tsv"
+
+for rom in good other bad crash; do : >"$HOME/Games/roms/$rom.zip"; done
+: >"$notes"
+: >"$focused"
+
+"$launcher" good
+check "a launch returns straight away" "$?" "0"
+eventually '[[ "$(games_running)" == 1 ]]'
+check "and the game is running" "$(games_running)" "1"
+first="$(running_pid)"
+check "under the pid the launcher wrote down" "$(kill -0 "$first" 2>/dev/null && echo alive)" "alive"
+check "the play is remembered" "$(grep -c "good.zip" "$history")" "1"
+check "the listing says it is playing" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /good.zip$/ { print ($3 > 0) "," $4 }')" "1,playing"
+sleep 1
+check "a game that started says nothing" "$(cat "$notes")" ""
+
+"$launcher" good
+check "launching it again starts no second copy" "$(games_running)" "1"
+check "it brings the running one forward" "$(grep -c "pid:$first" "$focused")" "1"
+check "and counts as playing it again" "$(grep -c "good.zip" "$history")" "2"
+
+"$launcher" other
+eventually '! kill -0 "$first" 2>/dev/null'
+check "another game closes the one running" "$(kill -0 "$first" 2>/dev/null && echo alive || echo closed)" "closed"
+check "and runs in its place" "$(games_running)" "1"
+check "which is now the one playing" "$(cut -f2 "$XDG_RUNTIME_DIR/omarchy-arcade.running")" "$HOME/Games/roms/other.zip"
+
+"$launcher" bad
+eventually 'grep -q "did not start" "$notes"'
+check "a romset with files missing is reported" "$(grep -c "bad did not start" "$notes")" "1"
+check "saying how many and which" \
+  "$(grep -o '4 files are missing from the romset (201-p1.p1, 201-s1.s1, 201-c1.c1, ...)' "$notes")" \
+  "4 files are missing from the romset (201-p1.p1, 201-s1.s1, 201-c1.c1, ...)"
+eventually '[[ "$(games_running)" == 0 ]]'
+check "and RetroArch is not left sitting in its menu" "$(games_running)" "0"
+check "a failed launch is not a game played" "$(grep -c "bad.zip" "$history")" "0"
+check "nor the one running" "$([[ -e "$XDG_RUNTIME_DIR/omarchy-arcade.running" ]] && echo yes || echo no)" "no"
+
+: >"$notes"
+"$launcher" crash
+eventually 'grep -q "did not start" "$notes"'
+check "a crash on start is reported too" \
+  "$(grep -c "crash did not start. RetroArch closed as soon as it started." "$notes")" "1"
+
+# One not started by the launcher: yours to close, not the launcher's.
+: >"$notes"
+: >"$focused"
+(exec -a fakearch "$sandbox/bin/fakearch" "$sandbox/mine.zip") >/dev/null 2>&1 &
+mine=$!
+eventually '[[ "$(games_running)" == 1 ]]'
+"$launcher" good 2>/dev/null
+check "a RetroArch the launcher did not start is refused" "$?" "72"
+check "and left running" "$(kill -0 "$mine" 2>/dev/null && echo alive)" "alive"
+check "with a reason on the desktop" "$(grep -c "RetroArch is already running" "$notes")" "1"
+kill "$mine" 2>/dev/null
 
 printf '\n'
 if ((failed)); then

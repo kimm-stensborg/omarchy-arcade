@@ -48,7 +48,8 @@ const titles = list => list.map(g => g.title)
 
 check("every row is read", games.length, 6)
 check("title is the first field", games[0].title, "Bubble Bobble")
-check("path is the rest", games[0].path, "/home/kimm/Games/roms/bublbobl.zip")
+check("path is the second", games[0].path, "/home/kimm/Games/roms/bublbobl.zip")
+check("a game never played has no date", games[0].lastPlayed, 0)
 check("rom name comes off the path", games[0].rom, "bublbobl")
 check("a title may contain a colon", games[2].title, "Snow Bros. 2: With New Elves")
 check("nothing parses to nothing", M.parseList(""), [])
@@ -56,6 +57,47 @@ check("trailing newline adds no row", M.parseList("A\t/a.zip\n").length, 1)
 // A row with no tab cannot say which file it would launch.
 check("a row without a tab is dropped", M.parseList("just a title").length, 0)
 check("an empty path is dropped", M.parseList("Title\t").length, 0)
+
+// ------------------------------------------------------------------ history
+
+const PLAYED = M.parseList([
+  "Bubble Bobble\t/r/bublbobl.zip\t1000\t",
+  "Galaga\t/r/galaga.zip\t\t",
+  "Pang\t/r/pang.zip\t3000\tplaying",
+  "Rainbow Islands\t/r/rbisland.zip\t2000",
+  "Toki\t/r/toki.zip",
+].join("\n"))
+
+check("when it was last played is read", PLAYED[0].lastPlayed, 1000)
+check("the game running now is marked", PLAYED[2].playing, true)
+check("and no other", PLAYED.filter(g => g.playing).length, 1)
+check("the older two-column form still reads", PLAYED[4].path, "/r/toki.zip")
+
+check("recent games lead the wall, newest first",
+      titles(M.wallGames(PLAYED, 6)), ["Pang", "Rainbow Islands", "Bubble Bobble", "Galaga", "Toki"])
+check("capped at the row they fit in",
+      titles(M.wallGames(PLAYED, 1)), ["Pang", "Bubble Bobble", "Galaga", "Rainbow Islands", "Toki"])
+check("0 keeps the alphabet", titles(M.wallGames(PLAYED, 0)), titles(PLAYED))
+check("a game is never on the wall twice", M.wallGames(PLAYED, 6).length, PLAYED.length)
+check("a library nobody has played is just the alphabet", titles(M.wallGames(games, 6)), titles(games))
+
+check("seconds ago is just now", M.playedAgo(1000, 1030), "just now")
+check("one minute is singular", M.playedAgo(1000, 1000 + 60), "1 minute ago")
+check("hours", M.playedAgo(0 + 1, 1 + 3 * 3600), "3 hours ago")
+check("a day and a bit is yesterday", M.playedAgo(1, 1 + 30 * 3600), "yesterday")
+check("days", M.playedAgo(1, 1 + 5 * 86400), "5 days ago")
+check("weeks", M.playedAgo(1, 1 + 21 * 86400), "3 weeks ago")
+check("months", M.playedAgo(1, 1 + 95 * 86400), "3 months ago")
+check("never played says nothing", M.playedAgo(0, 5000), "")
+
+check("the tile of the running game says so", M.tileNote(PLAYED[2], 4000), "playing now")
+check("a played one says when", M.tileNote(PLAYED[0], 1000 + 7200), "2 hours ago")
+check("the running game is found", M.playingGame(PLAYED).title, "Pang")
+check("Enter on the running game goes back to it",
+      M.launchNote(PLAYED[2], PLAYED[2]), "playing now · Enter goes back to it")
+check("Enter on another replaces it, and says so first",
+      M.launchNote(PLAYED[0], PLAYED[2]), "Enter closes Pang and starts this")
+check("with nothing running Enter just plays", M.launchNote(PLAYED[0], null), "")
 
 // ----------------------------------------------------------------- matching
 

@@ -5,27 +5,103 @@
 // panel makes. None of it needs a running shell, so all of it is tested by
 // test.js.
 
-// "Title<TAB>/path/to/rom.zip" per line, exactly what --list prints. Lines
-// without a tab are ignored rather than guessed at: a half-parsed row would
-// launch the wrong file.
+// "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing" per line, exactly
+// what --list prints; the last two may be empty or absent. Lines without a
+// tab are ignored rather than guessed at: a half-parsed row would launch the
+// wrong file.
 function parseList(text) {
   var games = []
   if (!text) return games
 
   var lines = String(text).split("\n")
   for (var i = 0; i < lines.length; i++) {
-    var line = lines[i]
-    if (!line) continue
-    var tab = line.indexOf("\t")
-    if (tab <= 0) continue
+    var parts = lines[i].split("\t")
+    if (parts.length < 2) continue
 
-    var title = line.substring(0, tab)
-    var path = line.substring(tab + 1)
+    var title = parts[0]
+    var path = parts[1]
     if (!title.length || !path.length) continue
 
-    games.push({ title: title, path: path, rom: romName(path) })
+    var played = parseInt(parts[2] || "", 10)
+    games.push({
+      title: title, path: path, rom: romName(path),
+      lastPlayed: isNaN(played) ? 0 : played,
+      playing: parts[3] === "playing"
+    })
   }
   return games
+}
+
+// The wall with nothing typed: the games you last played lead it, newest
+// first, then the whole library alphabetically. Capped at a row, so the
+// alphabet is never more than one row away -- and a recent game is not listed
+// twice, which would make arrowing past it feel like the wall stuttered.
+function wallGames(games, limit) {
+  var list = games || []
+  var cap = Math.max(0, limit | 0)
+  if (cap === 0) return list.slice()
+
+  var played = []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].lastPlayed > 0) played.push({ order: i, game: list[i] })
+  }
+  played.sort(function(a, b) {
+    return b.game.lastPlayed !== a.game.lastPlayed ? b.game.lastPlayed - a.game.lastPlayed : a.order - b.order
+  })
+  played = played.slice(0, cap)
+
+  var lead = {}
+  var out = []
+  for (var j = 0; j < played.length; j++) {
+    lead[played[j].order] = true
+    out.push(played[j].game)
+  }
+  for (var k = 0; k < list.length; k++) {
+    if (!lead[k]) out.push(list[k])
+  }
+  return out
+}
+
+// "2 hours ago", for the line under a tile. Coarse on purpose: when you last
+// played Galaga is a feeling, not a timestamp.
+function playedAgo(epoch, now) {
+  if (!epoch) return ""
+  var seconds = Math.max(0, Math.floor(now) - epoch)
+  var minutes = Math.floor(seconds / 60)
+  var hours = Math.floor(minutes / 60)
+  var days = Math.floor(hours / 24)
+
+  function plural(n, unit) { return n + " " + unit + (n === 1 ? "" : "s") + " ago" }
+  if (minutes < 1) return "just now"
+  if (hours < 1) return plural(minutes, "minute")
+  if (days < 1) return plural(hours, "hour")
+  if (days < 2) return "yesterday"
+  if (days < 14) return plural(days, "day")
+  if (days < 60) return plural(Math.floor(days / 7), "week")
+  if (days < 730) return plural(Math.floor(days / 30), "month")
+  return plural(Math.floor(days / 365), "year")
+}
+
+// What the line under a tile says after the ROM name.
+function tileNote(game, now) {
+  if (!game) return ""
+  if (game.playing) return "playing now"
+  return playedAgo(game.lastPlayed, now)
+}
+
+function playingGame(games) {
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].playing) return list[i]
+  }
+  return null
+}
+
+// What Enter will do to the game already running, said before it is pressed.
+function launchNote(selected, playing) {
+  if (!selected || !playing) return ""
+  if (selected.path === playing.path) return "playing now · Enter goes back to it"
+  return "Enter closes " + playing.title + " and starts this"
 }
 
 function romName(path) {
@@ -221,6 +297,8 @@ function settingsSchema() {
       unit: "px", group: "Panel", help: "How wide a game tile aims to be." },
     { key: "MAX_COLUMNS", label: "Tiles per row", kind: "number", min: 2, max: 12, step: 1,
       group: "Panel", help: "Most tiles the wall will put in one row." },
+    { key: "RECENT_GAMES", label: "Recently played", kind: "number", min: 0, max: 12, step: 1,
+      group: "Panel", help: "How many recent games lead the wall, never more than a row. 0 turns it off." },
 
     { key: "TITLES_FILE", label: "Title overrides", kind: "path", group: "Files" },
     { key: "CACHE_FILE", label: "Title cache", kind: "path", group: "Files" },

@@ -65,11 +65,25 @@ Item {
   // The row waiting for a key to be pressed at it, or -1.
   property int capturingIndex: -1
 
-  readonly property var rows: Model.filterGames(root.games, root.filterText)
+  // Typing searches the whole library; with nothing typed, the games you last
+  // played lead the wall -- at most one row of them, so Enter on open replays
+  // the last game and the alphabet starts right below.
+  readonly property int recentLimit: Math.min(root.columns,
+    Math.max(0, Model.settingNumber(root.settingsParsed, "RECENT_GAMES", 6)))
+  readonly property var rows: root.filterText.trim().length > 0
+    ? Model.filterGames(root.games, root.filterText)
+    : Model.wallGames(root.games, root.recentLimit)
+  // The game RetroArch is running right now, if the launcher started one.
+  readonly property var playing: Model.playingGame(root.games)
+  // Seconds since the epoch as of this open, for "2 hours ago". Taken once:
+  // a label that ticks while you look at it is noise.
+  property real now: Date.now() / 1000
   readonly property var selected: root.selectedIndex >= 0 && root.selectedIndex < root.rows.length
     ? root.rows[root.selectedIndex]
     : null
   readonly property bool hasProblem: root.problemReport.length > 0
+  // Said in the footer before Enter is pressed, when a game is already running.
+  readonly property string launchNote: Model.launchNote(root.selected, root.playing)
 
   // Theme: shares the [menu] surface tokens, so a theme that styles the
   // Omarchy menu styles this panel too.
@@ -129,6 +143,7 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
     root.opened = true
+    root.now = Date.now() / 1000
     root.filterText = payload.filter ? String(payload.filter) : ""
     root.selectedIndex = 0
     root.statusMessage = ""
@@ -419,7 +434,7 @@ Item {
     if (!game) return
     launchProc.command = [root.launcher, game.path]
     launchProc.running = true
-    root.statusMessage = "Starting " + game.title + "…"
+    root.statusMessage = (game.playing ? "Back to " : "Starting ") + game.title + "…"
     // Close immediately: RetroArch takes a second or two to appear, and a
     // panel sitting on top of a game that is about to go fullscreen is worse
     // than one that got out of the way.
@@ -921,6 +936,32 @@ Item {
                           sourceSize.width: 640
                         }
 
+                        // The game on screen right now, marked on its own art
+                        // so it is found at a glance on a wall of title screens.
+                        Rectangle {
+                          visible: tile.entry && tile.entry.playing
+                          z: 2
+                          anchors.left: parent.left
+                          anchors.top: parent.top
+                          anchors.margins: Style.space(8)
+                          height: Style.font.caption + Style.space(8)
+                          width: playingText.implicitWidth + Style.space(14)
+                          radius: height / 2
+                          color: root.accent
+
+                          Text {
+                            id: playingText
+                            anchors.centerIn: parent
+                            textFormat: Text.PlainText
+                            text: "PLAYING"
+                            color: root.artWell
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                            font.letterSpacing: Style.space(1)
+                          }
+                        }
+
                         // No artwork, or none yet: the game's initials set like
                         // a marquee, which beats an empty black rectangle.
                         Text {
@@ -958,9 +999,12 @@ Item {
                       Text {
                         width: parent.width
                         textFormat: Text.PlainText
-                        text: tile.entry ? tile.entry.rom : ""
-                        color: root.foreground
-                        opacity: 0.45
+                        text: tile.entry
+                          ? tile.entry.rom + (Model.tileNote(tile.entry, root.now)
+                                              ? "  ·  " + Model.tileNote(tile.entry, root.now) : "")
+                          : ""
+                        color: tile.entry && tile.entry.playing ? root.accent : root.foreground
+                        opacity: tile.entry && tile.entry.playing ? 0.9 : 0.45
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
                         elide: Text.ElideRight
@@ -1276,13 +1320,16 @@ Item {
                            + Model.describeSource(root.settingsRow)
                          : ""))
                   : (root.selected
-                     ? root.selected.rom + "  ·  " + Model.shortenPath(root.selected.path, root.home)
+                     ? root.selected.rom + "  ·  "
+                       + (root.launchNote || Model.shortenPath(root.selected.path, root.home))
                      : "")
-                color: root.settingsOpen
-                  && (root.settingsError || root.capturing || Model.describeState(root.settingsRow))
+                color: (root.settingsOpen
+                        && (root.settingsError || root.capturing || Model.describeState(root.settingsRow)))
+                  || (!root.settingsOpen && root.launchNote)
                   ? root.accent : root.foreground
-                opacity: root.settingsOpen
-                  && (root.settingsError || root.capturing || Model.describeState(root.settingsRow))
+                opacity: (root.settingsOpen
+                          && (root.settingsError || root.capturing || Model.describeState(root.settingsRow)))
+                  || (!root.settingsOpen && root.launchNote)
                   ? 1 : 0.45
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption

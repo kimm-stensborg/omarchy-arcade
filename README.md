@@ -81,10 +81,45 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | type | filter by title or ROM name |
 | `←` `↑` `↓` `→`, `Ctrl+P` `Ctrl+N` | move the selection |
 | `PgUp` `PgDn`, `Home` `End` | jump |
-| `Enter` | launch the selected game |
+| `Enter` | launch the selected game, or return to it if it is running |
 | `F5` | re-read the ROM directory |
 | `Ctrl+,` | open the settings, controls included |
 | `Esc` | close |
+
+## The wall
+
+With nothing typed, the games you last played lead the wall, newest first, so
+opening it and pressing `Enter` puts you back in the last game. There is at most
+one row of them (`RECENT_GAMES`, `0` turns it off); the rest of the library
+follows alphabetically, and no game appears twice. Under each tile is when you
+last played it. The first time the panel opens after an upgrade, the history
+is built from the launch headers already in `arcade.log`. After that it is kept
+in `~/.local/state/omarchy/arcade-history.tsv`.
+
+One game runs at a time. The one running is marked **PLAYING**, and the
+footer says what `Enter` will do before you press it: on that game it brings it
+back to the front, and on any other game it closes the running one and starts
+the new one. RetroArch quits cleanly on the way out, so high scores are saved.
+If you opened RetroArch yourself, it is left alone: the launcher brings it to
+the front and asks you to close it first.
+
+### When a game does not start
+
+A romset with files missing does not make RetroArch exit. The core unloads,
+and RetroArch sits in its own menu, so from a keybinding it looks like nothing
+happened. The launcher therefore reads RetroArch's log (it runs with
+`--verbose`) until the game shows a picture. If the core gives up instead,
+RetroArch is closed and a notification says why:
+
+> **Metal Slug did not start.** 13 files are missing from the romset
+> (201-p1.p1, 201-s1.s1, 201-c1.c1, ...) -- it may be for another version, or
+> need its BIOS.
+
+A launch that failed is not counted as a game played. The launcher waits up to
+twenty seconds for an answer: a large CHD can take that long to load, and a
+guess would close a game that was about to start.
+
+## Search
 
 Matching looks at both names, because half of arcade memory is the short one:
 `bublbobl` finds Bubble Bobble, `snow` finds all three Snow Bros., and a title
@@ -168,7 +203,8 @@ arcade-launcher --doctor
 ```
 
 It exits with the code of the first problem (`66` no ROM dir, `67` no ROMs,
-`68` no core, `69` no menu program, `70` no RetroArch).
+`68` no core, `69` no menu program, `70` no RetroArch). A launch refused
+because a RetroArch the launcher did not start is already running exits `72`.
 
 ## Configuration
 
@@ -191,6 +227,7 @@ in the environment for a single run. See
 | `ART_DIR` | `~/.cache/omarchy/arcade-art` |
 | `TILE_SIZE` | `300` — the width a game tile aims for, in pixels (overlay only) |
 | `MAX_COLUMNS` | `6` — most tiles in one row (overlay only) |
+| `RECENT_GAMES` | `6` — recently played games leading the wall, at most one row; `0` is off (overlay only) |
 
 ### From the panel
 
@@ -220,9 +257,9 @@ the line rather than writing a default into it. The file remains the source of
 truth, so editing it by hand is still the same thing as editing it here — the
 panel re-reads it every time it opens.
 
-`TILE_SIZE` and `MAX_COLUMNS` are the overlay's own: the launcher does not use
+`TILE_SIZE`, `MAX_COLUMNS` and `RECENT_GAMES` are the overlay's own: the launcher does not use
 them, but they live in the same file so there is one place arcade settings are
-kept and one editor for them. Changing either re-lays out the wall immediately.
+kept and one editor for them. Changing any of them re-lays out the wall immediately.
 
 The launcher exposes the same two operations for scripts:
 
@@ -303,7 +340,7 @@ by itself — from a terminal, a script, or a plain Hyprland install with no
 ```bash
 arcade-launcher                  # wofi/rofi/fuzzel menu, then launch
 arcade-launcher bublbobl         # launch directly by ROM name
-arcade-launcher --list           # "title<TAB>path" for every ROM found
+arcade-launcher --list           # "title<TAB>path<TAB>last played<TAB>playing" per ROM
 arcade-launcher --doctor         # check the setup
 arcade-launcher --rebuild-titles # refresh the cache
 arcade-launcher --settings       # every setting, its value and where it came from
@@ -311,8 +348,10 @@ arcade-launcher --set ARTWORK=off  # write a setting to arcade.conf
 ```
 
 RetroArch is detached with `setsid` (through `uwsm-app` when present) and its
-output is appended to `~/.cache/omarchy/arcade.log` with a timestamped header
-per launch. If a game fails to start, that log is the first place to look.
+verbose output is appended to `~/.cache/omarchy/arcade.log` with a timestamped
+header per launch. Past 4 MB only the last megabyte is kept. If a game fails to
+start, the notification quotes the part that matters, and the log has the
+rest.
 
 For plain Hyprland, [`hypr/hyprland.conf.snippet`](hypr/hyprland.conf.snippet)
 has the window rules and a keybinding in classic `windowrulev2` syntax.

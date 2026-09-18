@@ -69,3 +69,7 @@ ROM_DIR="$HOME/Games/roms"
 # The most tiles the wall will put in one row, whatever the tile size works
 # out to. 2-12.
 #MAX_COLUMNS="6"
+
+# How many recently played games lead the wall when nothing is typed, newest
+# first. Never more than fit in one row; 0 keeps the wall alphabetical. 0-12.
+#RECENT_GAMES="6"

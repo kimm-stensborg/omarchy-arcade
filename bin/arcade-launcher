@@ -19,8 +19,20 @@ readonly EX_NO_CORE=68
 readonly EX_NO_MENU=69
 readonly EX_NO_RETROARCH=70
 readonly EX_UNKNOWN_ROM=71
+readonly EX_BUSY=72
 
 readonly CONFIG_FILE="${ARCADE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/arcade.conf}"
+
+# What was played and when, "epoch<TAB>path" per launch: the panel leads with
+# the games you actually play. State rather than cache -- losing it loses
+# something you did, not something that can be rebuilt.
+readonly HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/arcade-history.tsv"
+# The game running right now, "pid<TAB>path". Runtime state: it means nothing
+# after a reboot.
+readonly RUNNING_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy-arcade.running"
+# The program to run and the process name to look for. Only the tests change
+# it, so they never mistake a RetroArch you have open for one of theirs.
+readonly RETROARCH_BIN="${ARCADE_RETROARCH_BIN:-retroarch}"
 
 # The settings the overlay's editor may read and write. Everything else in
 # arcade.conf is still honoured -- this list is only what gets a row in the
@@ -28,7 +40,7 @@ readonly CONFIG_FILE="${ARCADE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy
 readonly SETTING_KEYS=(
   ROM_DIR ROM_EXTS CORE_PATH RETROARCH_CONFIG
   ARTWORK ART_KINDS ART_DIR
-  TILE_SIZE MAX_COLUMNS
+  TILE_SIZE MAX_COLUMNS RECENT_GAMES
   TITLES_FILE CACHE_FILE LOG_FILE MENU_CMD
 )
 
@@ -138,6 +150,7 @@ load_config() {
   # and one editor cover every arcade setting.
   : "${TILE_SIZE:=300}"
   : "${MAX_COLUMNS:=6}"
+  : "${RECENT_GAMES:=6}"
   : "${CACHE_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade-titles.cache.tsv}"
   : "${LOG_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade.log}"
   : "${RETROARCH_CONFIG:=}"
@@ -298,15 +311,30 @@ readonly BIOS_SETS=(
 # ROMs with no mapping keep their bare filename rather than a guessed title.
 # BIOS sets are left out; a title of your own in arcade-titles.tsv that does
 # not end in "BIOS" brings one back.
+#
+# Two more columns ride along for the panel: when the game was last played (an
+# epoch, empty if never) and "playing" for the one running right now. A dmenu
+# only ever sees the first.
 build_menu_lines() {
+  local playing=""
+  playing="$(running_game | cut -f2)"
+  seed_history
   {
+    [[ -r "$HISTORY_FILE" ]] && cat -- "$HISTORY_FILE"
+    printf '\036\n'
     title_sources
     printf '\034\n'
     find_roms
-  } | awk -F'\t' -v bios_sets="${BIOS_SETS[*]}" '
+  } | awk -F'\t' -v bios_sets="${BIOS_SETS[*]}" -v playing="$playing" '
     BEGIN {
       n_bios = split(bios_sets, names, " ")
       for (i = 1; i <= n_bios; i++) listed[names[i]] = 1
+      section = -1
+    }
+    section < 0 && $0 == "\036" { section = 0; next }
+    section < 0 {
+      if (NF >= 2 && $1 + 0 > played[$2] + 0) played[$2] = $1
+      next
     }
     section < 2 && $0 == "\035" { section = 1; next }
     section < 2 && $0 == "\034" { section = 2; next }
@@ -340,7 +368,8 @@ build_menu_lines() {
         # Two ROMs can share a title (a parent and its clone). Tag both with the
         # ROM name so the menu stays unambiguous and the right file gets launched.
         label = (seen[labels[i]] > 1) ? labels[i] " (" roms[i] ")" : labels[i]
-        printf "%s\t%s\n", label, paths[i]
+        printf "%s\t%s\t%s\t%s\n", label, paths[i], played[paths[i]], \
+          (paths[i] == playing ? "playing" : "")
       }
     }
   ' | sort -f -t $'\t' -k1,1
@@ -351,23 +380,201 @@ build_menu_lines() {
 # --------------------------------------------------------------------------
 
 launch_rom() {
-  local rom="$1"
-  local -a cmd=(retroarch -L "$CORE_PATH")
+  local rom="$1" running pid path
+  local -a cmd=("$RETROARCH_BIN" --verbose -L "$CORE_PATH")
+
+  # One cabinet, one game. The game already running is brought back rather
+  # than started twice; a different one is closed first, the way picking a new
+  # game on a multi-game cabinet ends the one in progress. RetroArch quits
+  # cleanly on SIGTERM, so high scores are saved on the way out.
+  running="$(running_game)"
+  if [[ -n "$running" ]]; then
+    IFS=$'\t' read -r pid path <<<"$running"
+    if [[ "$path" == "$rom" ]]; then
+      focus_window "$pid"
+      record_play "$rom" "$(date +%s)"
+      return 0
+    fi
+    stop_game "$pid"
+  elif pid="$(pgrep -x -- "${RETROARCH_BIN##*/}" | head -n1)" && [[ -n "$pid" ]]; then
+    # A RetroArch this launcher did not start may be halfway through anything;
+    # it is not ours to close.
+    focus_window "$pid"
+    die "$EX_BUSY" "RetroArch is already running. Close it first to start $(rom_title "$rom")."
+  fi
 
   [[ -n "$RETROARCH_CONFIG" ]] && cmd+=(--config "$RETROARCH_CONFIG")
   cmd+=("$rom")
 
   # Omarchy launches graphical apps through uwsm so they get their own scope.
+  # uwsm-app execs its way down to RetroArch, so the pid started here is the
+  # game's for as long as it runs.
   if command -v uwsm-app >/dev/null 2>&1; then
     cmd=(uwsm-app -- "${cmd[@]}")
   fi
 
   mkdir -p "${LOG_FILE%/*}"
+  trim_log
   printf '\n=== %s launching %s ===\n' "$(date -Is)" "$rom" >>"$LOG_FILE"
+  local offset started
+  offset="$(stat -c %s -- "$LOG_FILE")"
+  started="$(date +%s)"
 
-  # Detach fully: the keybinding process exits immediately, the game keeps running.
-  setsid --fork "${cmd[@]}" >>"$LOG_FILE" 2>&1 < /dev/null ||
-    die 1 "failed to start RetroArch; see $LOG_FILE"
+  # Detach fully: the keybinding process exits immediately, the game keeps
+  # running. Not setsid --fork, because the pid is what everything after this
+  # needs.
+  setsid "${cmd[@]}" >>"$LOG_FILE" 2>&1 </dev/null &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+
+  printf '%s\t%s\n' "$pid" "$rom" >"$RUNNING_FILE" 2>/dev/null || true
+  record_play "$rom" "$started"
+
+  # Watched from the side, so whatever started us -- the panel, a keybinding
+  # -- is not held up while RetroArch loads.
+  watch_launch "$pid" "$rom" "$offset" "$started" </dev/null >/dev/null 2>&1 &
+  disown $! 2>/dev/null || true
+}
+
+# "pid<TAB>path" of the game this launcher started, if it is still running.
+# A pid alone is not enough -- after a reboot or a crash it may belong to
+# something else entirely -- so the process has to still be a RetroArch.
+running_game() {
+  local pid path
+  [[ -r "$RUNNING_FILE" ]] || return 0
+  IFS=$'\t' read -r pid path <"$RUNNING_FILE" || true
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  if kill -0 "$pid" 2>/dev/null && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q -- "${RETROARCH_BIN##*/}"; then
+    printf '%s\t%s\n' "$pid" "$path"
+  fi
+  return 0
+}
+
+stop_game() {
+  local pid="$1" tries=0
+  kill -TERM "$pid" 2>/dev/null || return 0
+  while kill -0 "$pid" 2>/dev/null && ((tries < 50)); do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+focus_window() {
+  command -v hyprctl >/dev/null 2>&1 || return 0
+  hyprctl dispatch "hl.dsp.focus({ window = \"pid:$1\" })" >/dev/null 2>&1 || true
+}
+
+record_play() {
+  local rom="$1" when="$2"
+  mkdir -p "${HISTORY_FILE%/*}" 2>/dev/null || return 0
+  printf '%s\t%s\n' "$when" "$rom" >>"$HISTORY_FILE" 2>/dev/null || return 0
+
+  # Only the latest play of each game matters, so the file is folded down to
+  # that once it has grown, rather than growing for as long as it is used.
+  if (($(wc -l <"$HISTORY_FILE") > 1000)); then
+    local tmp
+    tmp="$(mktemp "$HISTORY_FILE.XXXXXX")" || return 0
+    awk -F'\t' '{ last[$2] = $1 } END { for (p in last) printf "%s\t%s\n", last[p], p }' \
+      "$HISTORY_FILE" | sort -n >"$tmp" && mv -f "$tmp" "$HISTORY_FILE" || rm -f "$tmp"
+  fi
+}
+
+# The launch headers arcade.log has always had are a history already, so the
+# first listing after an upgrade starts from them rather than from nothing.
+seed_history() {
+  [[ -e "$HISTORY_FILE" || ! -r "$LOG_FILE" ]] && return 0
+  mkdir -p "${HISTORY_FILE%/*}" 2>/dev/null || return 0
+  local lines
+  lines="$(sed -nE 's/^=== ([^ ]+) launching (.*) ===$/\1\t\2/p' -- "$LOG_FILE")"
+  [[ -n "$lines" ]] || return 0
+  paste <(cut -f1 <<<"$lines" | date -f - +%s 2>/dev/null) <(cut -f2 <<<"$lines") |
+    awk -F'\t' '$1 ~ /^[0-9]+$/' >"$HISTORY_FILE" 2>/dev/null || true
+}
+
+# A launch that failed is not a game you played.
+forget_play() {
+  local rom="$1" when="$2" tmp
+  [[ -w "$HISTORY_FILE" ]] || return 0
+  tmp="$(mktemp "$HISTORY_FILE.XXXXXX")" || return 0
+  awk -F'\t' -v when="$when" -v rom="$rom" '!($1 == when && $2 == rom)' "$HISTORY_FILE" >"$tmp" &&
+    mv -f "$tmp" "$HISTORY_FILE" || rm -f "$tmp"
+}
+
+# RetroArch runs with --verbose so a failure says why, which makes the log
+# grow: past 4 MB only the last megabyte is kept.
+trim_log() {
+  [[ -f "$LOG_FILE" ]] || return 0
+  (($(stat -c %s -- "$LOG_FILE") > 4194304)) || return 0
+  local tmp
+  tmp="$(mktemp "$LOG_FILE.XXXXXX")" || return 0
+  tail -c 1048576 -- "$LOG_FILE" >"$tmp" && mv -f "$tmp" "$LOG_FILE" || rm -f "$tmp"
+}
+
+rom_title() {
+  local rom="${1##*/}"
+  rom="${rom%.*}"
+  title_sources | awk -F'\t' -v rom="$rom" '
+    $1 == rom && NF >= 2 { print $2; found = 1; exit }
+    END { if (!found) print rom }'
+}
+
+# Whether the game actually started. A romset that is incomplete, the wrong
+# version or missing its BIOS does not make RetroArch exit: FBNeo shows a
+# screen of its own listing the missing files, other cores leave RetroArch in
+# its menu -- from a keybinding, either looks like nothing happened. So the
+# log is read until the core reports the game's picture (started) or a
+# failure, and a failure closes RetroArch and says why.
+watch_launch() {
+  local pid="$1" rom="$2" offset="$3" started="$4" tries=0 chunk reason=""
+  while ((tries < 80)); do
+    # Replaced by another launch: closed on purpose, so not a failure -- and
+    # what follows in the log is that game's, not this one's.
+    [[ "$(cut -f1 "$RUNNING_FILE" 2>/dev/null)" == "$pid" ]] || return 0
+    # This launch's part of the log only, up to the next launch's header.
+    chunk="$(tail -c +"$((offset + 1))" -- "$LOG_FILE" 2>/dev/null | awk '/^=== .* launching .* ===$/ { exit } { print }')"
+    # Failure is looked for before success, because it can look like success:
+    # FBNeo lists the files it lacks and then boots a screen of its own saying
+    # so, which reports a picture like any game.
+    if grep -qE 'is required$|Failed to load content|\[Core\] Unloading game' <<<"$chunk"; then
+      reason="$(launch_failure "$chunk")"
+      reason="${reason:-RetroArch could not load it.}"
+      stop_game "$pid"
+      break
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      reason="$(launch_failure "$chunk")"
+      reason="${reason:-RetroArch closed as soon as it started.}"
+      break
+    fi
+    grep -q '\[Core\] Geometry:' <<<"$chunk" && return 0
+    sleep 0.25
+    tries=$((tries + 1))
+  done
+  # Neither answer within twenty seconds: a big CHD can take that long, and
+  # guessing wrong would close a game that was about to start.
+  [[ -n "$reason" ]] || return 0
+
+  forget_play "$rom" "$started"
+  [[ "$(cut -f1 "$RUNNING_FILE" 2>/dev/null)" == "$pid" ]] && rm -f "$RUNNING_FILE"
+  notify critical "$(rom_title "$rom") did not start. $reason
+Details: ${LOG_FILE/#$HOME\//\~/}"
+}
+
+# The one sentence worth reading out of a failed load. FBNeo lists every file
+# the romset lacks, which is the common case: a set from another version, or a
+# game whose BIOS is not next to it.
+launch_failure() {
+  local chunk="$1" missing names
+  missing="$(grep -c 'is required' <<<"$chunk" || true)"
+  if ((missing > 0)); then
+    names="$(grep 'is required' <<<"$chunk" | grep -oE 'with name [^ ]+' | head -n3 | cut -d' ' -f3 |
+      paste -sd, - | sed 's/,/, /g')"
+    printf '%s file%s missing from the romset (%s%s) -- it may be for another version, or need its BIOS.\n' \
+      "$missing" "$( ((missing == 1)) && echo ' is' || echo 's are')" "$names" "$( ((missing > 3)) && echo ', ...')"
+    return 0
+  fi
+  grep -E 'ERROR' <<<"$chunk" | tail -n1 | sed -E 's/^(\[[^]]*\] *)+//' || true
 }
 
 # Resolve a bare short name ("bublbobl") to a path inside ROM_DIR.
@@ -415,7 +622,7 @@ diagnose() {
   local pkg
   pkg="$(package_command)"
 
-  if ! command -v retroarch >/dev/null 2>&1; then
+  if ! command -v "$RETROARCH_BIN" >/dev/null 2>&1; then
     add_problem "$EX_NO_RETROARCH" \
       "RetroArch is not installed" \
       "$pkg retroarch" \
@@ -589,7 +796,7 @@ $PROGRAM $VERSION - arcade quick-launcher for RetroArch
 Usage:
   $PROGRAM                  Show the menu and launch the selected game
   $PROGRAM <romname>        Launch a game directly, e.g. "$PROGRAM bublbobl"
-  $PROGRAM --list           Print "title<TAB>path" for every ROM found
+  $PROGRAM --list           Print "title<TAB>path<TAB>last played<TAB>playing" per ROM
   $PROGRAM --doctor         Check the setup and print what is missing
   $PROGRAM --rebuild-titles Rebuild the title cache from the libretro databases
   $PROGRAM --config         Print the resolved configuration
@@ -617,6 +824,7 @@ Configuration ($CONFIG_FILE, or the environment):
   ART_DIR           Where artwork is cached
   TILE_SIZE         Overlay only: width a game tile aims for, in pixels
   MAX_COLUMNS       Overlay only: most tiles the wall puts in a row
+  RECENT_GAMES      Overlay only: recently played games leading the wall (0 = off)
 
 Controls are kept in the arcade-only RetroArch profile RETROARCH_CONFIG names,
 made from a copy of your RetroArch config the first time one is written, so
