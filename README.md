@@ -86,7 +86,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `Tab` `Shift+Tab` | another version of the selected game |
 | `Alt+A` | add games: pick romsets in a file chooser (or `+` in the header) |
 | `F5` | re-read the ROM directory |
-| `Ctrl+,` | open the settings, controls included |
+| `Alt+S` | open the settings, controls included (again to close them) |
 | `Esc` | close |
 
 ## The wall
@@ -330,7 +330,7 @@ in the environment for a single run. See
 
 ### From the panel
 
-`Ctrl+,` opens the same settings inside the overlay, one row per key, and the
+`Alt+S` opens the same settings inside the overlay, one row per key, and the
 gear in the header does the same with a pointer. `←` `→` change a choice or a
 number in place, `Enter` edits a path or a line of text, `Delete` puts a row
 back to its default and `Esc` returns to the wall. `F5` re-reads the file, on

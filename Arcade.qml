@@ -551,7 +551,7 @@ Item {
     }
 
     if (event.key === Qt.Key_F5) { root.loadSettings(); return true }
-    if (ctrl && event.key === Qt.Key_Comma) { root.closeSettings(); return true }
+    if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_S) { root.closeSettings(); return true }
     if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N)) { root.moveSetting(1); return true }
     if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P)) { root.moveSetting(-1); return true }
     if (event.key === Qt.Key_Home) { root.settingsIndex = 0; return true }
@@ -1178,7 +1178,8 @@ Item {
             event.accepted = root.settingsKey(event)
             return
           }
-          if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Comma) {
+          // Alt+S for the settings, beside Alt+A for adding games.
+          if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_S) {
             root.openSettings()
             event.accepted = true
             return
@@ -2061,8 +2062,8 @@ Item {
                       ? "Enter saves · Esc cancels"
                       : "←→ changes · Enter edits\nDel resets · Esc goes back"))
                 : (root.hasProblem
-                   ? "Enter re-checks · Ctrl+, settings · Esc closes"
-                   : "Enter plays · ←↑↓→ selects\nCtrl+, settings · F5 rescans · Esc closes")
+                   ? "Enter re-checks · Alt+S settings · Esc closes"
+                   : "Enter plays · ←↑↓→ selects\nAlt+S settings · F5 rescans · Esc closes")
               color: root.foreground
               opacity: 0.4
               font.family: root.fontFamily

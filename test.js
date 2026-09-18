@@ -125,7 +125,7 @@ check("without a shelf, up from the first row stays", M.wallMove(2, "up", 4, 0, 
 check("the facts line", M.gameFacts(Object.assign({}, PLAYED_META[0], { lastPlayed: 1000 }), 1000 + 7200),
       "Taito  ·  1986  ·  played 2 hours ago  ·  bublbobl.zip")
 check("keyboard hints", M.wallHints(false, false).map((h) => h.keys.join("+") + " " + h.label),
-      ["Enter Play", "Alt+A Add", "Ctrl+, Settings", "Esc Close"])
+      ["Enter Play", "Alt+A Add", "Alt+S Settings", "Esc Close"])
 check("stick hints, with versions", M.wallHints(true, true).map((h) => h.keys.join("+") + " " + h.label),
       ["B Play", "Y+X Version", "− Settings", "Home Close"])
 

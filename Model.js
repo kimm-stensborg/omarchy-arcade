@@ -250,7 +250,7 @@ function wallHints(stick, versions) {
   var keys = [{ keys: ["Enter"], label: "Play" }]
   if (versions) keys.push({ keys: ["Tab"], label: "Version" })
   keys.push({ keys: ["Alt", "A"], label: "Add" })
-  keys.push({ keys: ["Ctrl", ","], label: "Settings" })
+  keys.push({ keys: ["Alt", "S"], label: "Settings" })
   keys.push({ keys: ["Esc"], label: "Close" })
   return keys
 }
