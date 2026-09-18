@@ -83,6 +83,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `PgUp` `PgDn`, `Home` `End` | jump |
 | `Enter` | launch the selected game |
 | `F5` | re-read the ROM directory |
+| `Ctrl+,` | open the settings, controls included |
 | `Esc` | close |
 
 Matching looks at both names, because half of arcade memory is the short one:
@@ -181,6 +182,103 @@ in the environment for a single run. See
 | `ARTWORK` | `on` — set to `off` to never fetch artwork |
 | `ART_KINDS` | `titles snaps boxarts` |
 | `ART_DIR` | `~/.cache/omarchy/arcade-art` |
+| `TILE_SIZE` | `300` — the width a game tile aims for, in pixels (overlay only) |
+| `MAX_COLUMNS` | `6` — most tiles in one row (overlay only) |
+
+### From the panel
+
+`Ctrl+,` opens the same settings inside the overlay, one row per key, and the
+gear in the header does the same with a pointer. `←` `→` change a choice or a
+number in place, `Enter` edits a path or a line of text, `Delete` puts a row
+back to its default and `Esc` returns to the wall. `F5` re-reads the file, on
+the wall as well as in the editor, so a hand edit lands without reopening.
+
+A row is marked with a dot when the value is the config file's rather than a
+default, and the line under the footer says where the value came from —
+`set here`, `autodetected`, `default`, or `from the environment` for a key that
+was exported for this run of the shell.
+
+Two rows are lists rather than typed paths, because the answer is one of a
+handful of files on this machine: **libretro core** offers every arcade core
+installed, and **menu command** the dmenu programs that are actually here, both
+led by an empty entry that means "autodetect". A path that is not there —
+a mistyped ROM directory, a core that has been uninstalled — is shown in the
+accent colour with `no such directory` under the footer, so the mistake is
+visible in the row that made it rather than as a library that lists nothing.
+
+Editing a row writes that one key to `arcade.conf` and nothing else: comments
+and hand-written lines stay where they are, a setting written for the first
+time lands under the commented example that describes it, and `Delete` removes
+the line rather than writing a default into it. The file remains the source of
+truth, so editing it by hand is still the same thing as editing it here — the
+panel re-reads it every time it opens.
+
+`TILE_SIZE` and `MAX_COLUMNS` are the overlay's own: the launcher does not use
+them, but they live in the same file so there is one place arcade settings are
+kept and one editor for them. Changing either re-lays out the wall immediately.
+
+The launcher exposes the same two operations for scripts:
+
+```bash
+arcade-launcher --settings              # "KEY<TAB>value<TAB>source<TAB>state"
+arcade-launcher --set TILE_SIZE=240     # write one; several pairs are allowed
+arcade-launcher --set TILE_SIZE=        # remove the line, back to the default
+```
+
+`source` is `file`, `env`, `auto` or `default`; `state` is `ok` or `missing`.
+`--settings` also prints an `OPTIONS_<KEY>` line, tab separated, for the rows
+that are lists. Values are written double-quoted, so `$HOME` keeps expanding
+the way the shipped example does, while quotes, backslashes, backticks and
+`$(…)` are escaped: the file is sourced, and a directory name is not a
+program.
+
+## Controls
+
+RetroArch's own binds put **insert coin on right shift** and start on enter,
+which is nobody's memory of an arcade cabinet. The **Controls** section of the
+settings fixes that, and the first row does it in one press:
+
+| Layout | Coin | Start | Stick | Buttons 1-6 |
+| --- | --- | --- | --- | --- |
+| **MAME standard** | `5` | `1` | arrows | `Ctrl` `Alt` `Space` `Shift` `Z` `X` |
+| **RetroArch default** | `RShift` | `Enter` | arrows | `A` `S` `Q` `Z` `X` `W` |
+
+Under it is a row per control — coin, start, the four directions, buttons 1 to
+6, player two's coin and start, and the exit, pause and menu hotkeys. Select
+one, press `Enter`, then **press the key you want**; `Esc` cancels rather than
+binding, which is also why `Esc` stays RetroArch's own way out of a game.
+`Delete` hands a control back to whatever your RetroArch config binds it to.
+
+Button numbering follows FBNeo's six-button arcade panel, which RetroArch lays
+out as `Y X L` over `B A R` — button 1 is the RetroPad's Y.
+
+### Where the binds live
+
+Not in your RetroArch. The panel writes an arcade-only profile —
+`~/.config/omarchy/arcade-retroarch.cfg` unless `RETROARCH_CONFIG` already
+names one — and points `RETROARCH_CONFIG` at it, so `arcade-launcher` passes it
+to RetroArch with `--config` and your everyday setup keeps its own binds.
+
+`--config` *replaces* RetroArch's configuration rather than layering over it, so
+a profile holding nothing but binds would throw away your video driver, paths
+and everything else. The profile is therefore made as a **copy of your
+RetroArch config**, with only the binds changed afterwards, and
+`config_save_on_exit` pinned to `false` so a session cannot quietly rewrite the
+binds on its way out. Delete the file to start over; the panel rebuilds it from
+your RetroArch config the next time a control is set.
+
+The same from a terminal:
+
+```bash
+arcade-launcher --controls                  # "control<TAB>key<TAB>source"
+arcade-launcher --controls-preset mame      # or retroarch
+arcade-launcher --set-control coin1=num5    # one control; empty = hand it back
+```
+
+`source` is `file` when the arcade profile binds it, `retroarch` when the bind
+is inherited from your own config. Key names are RetroArch's: `num5` is the 5
+on the number row, `keypad5` the one on the keypad, `ctrl` and `shift` the left
+ones, `nul` unbound.
 
 MAME needs romsets matching its own version and BIOS files in RetroArch's
 system directory; FBNeo is the friendlier default for classic arcade sets.
@@ -201,6 +299,8 @@ arcade-launcher bublbobl         # launch directly by ROM name
 arcade-launcher --list           # "title<TAB>path" for every ROM found
 arcade-launcher --doctor         # check the setup
 arcade-launcher --rebuild-titles # refresh the cache
+arcade-launcher --settings       # every setting, its value and where it came from
+arcade-launcher --set ARTWORK=off  # write a setting to arcade.conf
 ```
 
 RetroArch is detached with `setsid` (through `uwsm-app` when present) and its
@@ -232,6 +332,7 @@ launcher in `flock` — the first firing owns the menu, the rest are no-ops.
 Arcade.qml                     the overlay
 Model.js                       parsing, matching, formatting - all of it tested
 test.js                        node test.js
+test-launcher.sh               ./test-launcher.sh - the config and bind writers, in bash
 manifest.json                  plugin manifest
 bin/arcade-launcher            lists and launches; the panel's whole backend
 bin/arcade-rdb-dump            libretro .rdb -> TSV extractor (python3, no deps)

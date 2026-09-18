@@ -22,6 +22,59 @@ readonly EX_UNKNOWN_ROM=71
 
 readonly CONFIG_FILE="${ARCADE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/arcade.conf}"
 
+# The settings the overlay's editor may read and write. Everything else in
+# arcade.conf is still honoured -- this list is only what gets a row in the
+# panel, in the order it is shown there.
+readonly SETTING_KEYS=(
+  ROM_DIR ROM_EXTS CORE_PATH RETROARCH_CONFIG
+  ARTWORK ART_KINDS ART_DIR
+  TILE_SIZE MAX_COLUMNS
+  TITLES_FILE CACHE_FILE LOG_FILE MENU_CMD
+)
+
+# The cabinet controls, in the order the panel lists them: an id the panel uses
+# and the retroarch.cfg key it writes. RetroArch speaks RetroPad, so a stick's
+# buttons arrive as face buttons -- FBNeo lays a six-button arcade panel out as
+# Y X L / B A R, which is why they are numbered in that order here.
+readonly CONTROLS=(
+  "coin1|input_player1_select"
+  "start1|input_player1_start"
+  "up1|input_player1_up"
+  "down1|input_player1_down"
+  "left1|input_player1_left"
+  "right1|input_player1_right"
+  "b1|input_player1_y"
+  "b2|input_player1_x"
+  "b3|input_player1_l"
+  "b4|input_player1_b"
+  "b5|input_player1_a"
+  "b6|input_player1_r"
+  "coin2|input_player2_select"
+  "start2|input_player2_start"
+  "exit|input_exit_emulator"
+  "pause|input_pause_toggle"
+  "menu|input_menu_toggle"
+)
+
+# What "5 to insert a coin" actually means. MAME's own keyboard defaults, which
+# is what anyone who has played on a cabinet or in MAME expects; RetroArch's
+# stock binds are the other half of the pair, so the choice is reversible.
+readonly PRESET_MAME=(
+  "coin1|num5" "start1|num1"
+  "up1|up" "down1|down" "left1|left" "right1|right"
+  "b1|ctrl" "b2|alt" "b3|space" "b4|shift" "b5|z" "b6|x"
+  "coin2|num6" "start2|num2"
+  "exit|escape" "pause|p" "menu|f1"
+)
+
+readonly PRESET_RETROARCH=(
+  "coin1|rshift" "start1|enter"
+  "up1|up" "down1|down" "left1|left" "right1|right"
+  "b1|a" "b2|s" "b3|q" "b4|z" "b5|x" "b6|w"
+  "coin2|nul" "start2|nul"
+  "exit|escape" "pause|p" "menu|f1"
+)
+
 # Absolute path to this script: the terminal we open for the diagnosis starts in
 # some other directory, so "$0" alone would not find us again.
 SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
@@ -57,6 +110,15 @@ die() {
 # --------------------------------------------------------------------------
 
 load_config() {
+  # Which settings arrived from the environment. Sourcing the file overwrites
+  # them in place, so the only chance to tell "set for this run" apart from
+  # "written in the file" is before the source line.
+  ENV_KEYS=" "
+  local key
+  for key in "${SETTING_KEYS[@]}"; do
+    [[ -n "${!key+set}" ]] && ENV_KEYS+="$key "
+  done
+
   # The config file is a plain shell fragment: VAR=value lines, comments allowed.
   if [[ -r "$CONFIG_FILE" ]]; then
     # shellcheck source=/dev/null
@@ -70,7 +132,12 @@ load_config() {
   # so titles are clean the first time the panel opens.
   : "${SHIPPED_TITLES_FILE:=${SELF%/bin/*}/share/arcade-titles.tsv}"
   : "${ARTWORK:=on}"
+  : "${ART_KINDS:=titles snaps boxarts}"
   : "${ART_DIR:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade-art}"
+  # Read by the overlay only; the launcher just carries them so that one file
+  # and one editor cover every arcade setting.
+  : "${TILE_SIZE:=300}"
+  : "${MAX_COLUMNS:=6}"
   : "${CACHE_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade-titles.cache.tsv}"
   : "${LOG_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade.log}"
   : "${RETROARCH_CONFIG:=}"
@@ -87,29 +154,45 @@ load_config() {
   [[ -n "${MENU_CMD:-}" ]] || MENU_CMD="$(detect_menu)"
 }
 
-# FBNeo first: it is the better fit for classic arcade sets. MAME is the fallback.
+# The arcade cores worth offering, best first: FBNeo is the better fit for
+# classic arcade sets, MAME the fallback. Autodetection takes the first of
+# these that is installed; the settings editor offers all of them.
+readonly ARCADE_CORES=(fbneo mame mame2003_plus mame2010 mame2016)
+readonly CORE_DIRS=("$HOME/.config/retroarch/cores" "/usr/lib/libretro" "/usr/local/lib/libretro")
+
 detect_core() {
+  local path
+  path="$(arcade_core_paths | head -n1)"
+  printf '%s\n' "$path"
+  return 0
+}
+
+# Every arcade core actually installed, in the order autodetection would pick
+# them. The editor turns this into a list to arrow through, so choosing a core
+# is not typing an absolute path from memory.
+arcade_core_paths() {
   local dir core
-  for dir in "$HOME/.config/retroarch/cores" "/usr/lib/libretro" "/usr/local/lib/libretro"; do
+  for dir in "${CORE_DIRS[@]}"; do
     [[ -d "$dir" ]] || continue
-    for core in fbneo mame mame2003_plus mame2010 mame2016; do
-      if [[ -f "$dir/${core}_libretro.so" ]]; then
-        printf '%s\n' "$dir/${core}_libretro.so"
-        return 0
-      fi
+    for core in "${ARCADE_CORES[@]}"; do
+      [[ -f "$dir/${core}_libretro.so" ]] && printf '%s\n' "$dir/${core}_libretro.so"
     done
   done
   return 0
 }
 
 detect_menu() {
-  if command -v wofi >/dev/null 2>&1; then
-    printf '%s\n' "wofi --dmenu --insensitive --prompt Arcade"
-  elif command -v rofi >/dev/null 2>&1; then
-    printf '%s\n' "rofi -dmenu -i -p Arcade"
-  elif command -v fuzzel >/dev/null 2>&1; then
-    printf '%s\n' "fuzzel --dmenu --prompt=Arcade: "
-  fi
+  menu_presets | head -n1
+  return 0
+}
+
+# A ready-made command per dmenu program that is installed, same order as
+# autodetection. Only what is installed: a preset for a program that is not
+# there would be a setting that cannot work.
+menu_presets() {
+  command -v wofi >/dev/null 2>&1 && printf '%s\n' "wofi --dmenu --insensitive --prompt Arcade"
+  command -v rofi >/dev/null 2>&1 && printf '%s\n' "rofi -dmenu -i -p Arcade"
+  command -v fuzzel >/dev/null 2>&1 && printf '%s\n' "fuzzel --dmenu --prompt=Arcade: "
   return 0
 }
 
@@ -479,6 +562,13 @@ Usage:
   $PROGRAM --doctor         Check the setup and print what is missing
   $PROGRAM --rebuild-titles Rebuild the title cache from the libretro databases
   $PROGRAM --config         Print the resolved configuration
+  $PROGRAM --settings       Print "KEY<TAB>value<TAB>source" for every setting
+  $PROGRAM --set KEY=VALUE  Write a setting to the config file (empty = unset)
+  $PROGRAM --controls       Print "control<TAB>key<TAB>source" for the cabinet binds
+  $PROGRAM --set-control ID=KEY
+                            Bind one control, e.g. coin1=num5 (empty = unbind)
+  $PROGRAM --controls-preset mame|retroarch
+                            Write a whole control layout
   $PROGRAM --help           Show this help
   $PROGRAM --version        Show the version
 
@@ -491,6 +581,15 @@ Configuration ($CONFIG_FILE, or the environment):
   TITLES_FILE       TSV of "romname<TAB>Title" overrides
   CACHE_FILE        Generated title cache
   LOG_FILE          RetroArch output log (default: ~/.cache/omarchy/arcade.log)
+  ARTWORK           on | off - whether tiles may be fetched from the network
+  ART_KINDS         Artwork preference order (default: titles snaps boxarts)
+  ART_DIR           Where artwork is cached
+  TILE_SIZE         Overlay only: width a game tile aims for, in pixels
+  MAX_COLUMNS       Overlay only: most tiles the wall puts in a row
+
+Controls are kept in the arcade-only RetroArch profile RETROARCH_CONFIG names,
+made from a copy of your RetroArch config the first time one is written, so
+your everyday RetroArch keeps its own binds.
 EOF
 }
 
@@ -507,6 +606,298 @@ CACHE_FILE=$CACHE_FILE
 LOG_FILE=$LOG_FILE
 ARTWORK=$ARTWORK ($(find "$ART_DIR" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l) images cached in $ART_DIR)
 EOF
+}
+
+# --------------------------------------------------------------------------
+# Settings (the overlay's editor talks to these two)
+# --------------------------------------------------------------------------
+
+# Whether the config file assigns a key itself, as opposed to the value coming
+# from the environment or from a default. Only plain "KEY=" lines count, which
+# is all conf_set ever writes.
+conf_declares() {
+  [[ -r "$CONFIG_FILE" ]] || return 1
+  grep -qE "^[[:space:]]*$1=" "$CONFIG_FILE"
+}
+
+setting_source() {
+  local key="$1"
+  if conf_declares "$key"; then printf 'file\n'
+  elif [[ "$ENV_KEYS" == *" $key "* ]]; then printf 'env\n'
+  elif [[ "$key" == CORE_PATH || "$key" == MENU_CMD ]]; then printf 'auto\n'
+  else printf 'default\n'
+  fi
+}
+
+# Whether a setting points at something that is not there. --doctor diagnoses
+# this properly; this is the editor's early warning, so a mistyped directory is
+# visible in the row that made it rather than as a library that lists nothing.
+setting_state() {
+  local key="$1" value="$2"
+  [[ -n "$value" ]] || { printf 'ok\n'; return 0; }
+  case "$key" in
+    ROM_DIR) [[ -d "$value" ]] || { printf 'missing\n'; return 0; } ;;
+    CORE_PATH | RETROARCH_CONFIG)
+      [[ -f "$value" ]] || { printf 'missing\n'; return 0; } ;;
+  esac
+  printf 'ok\n'
+}
+
+# "KEY<TAB>value<TAB>source<TAB>state" per setting: what the panel reads to draw
+# its editor, what tells it which rows are the user's own choices, and which of
+# them point at nothing.
+#
+# "OPTIONS_<KEY><TAB>one<TAB>two" lines carry what a row can be arrowed through
+# where the answer is a list of what is installed rather than free text.
+show_settings() {
+  local key
+  printf 'CONFIG_FILE\t%s\t%s\n' "$CONFIG_FILE" "$([[ -r "$CONFIG_FILE" ]] && echo present || echo absent)"
+  for key in "${SETTING_KEYS[@]}"; do
+    printf '%s\t%s\t%s\t%s\n' "$key" "${!key-}" "$(setting_source "$key")" \
+      "$(setting_state "$key" "${!key-}")"
+  done
+
+  local -a options
+  mapfile -t options < <(arcade_core_paths)
+  if ((${#options[@]})); then
+    printf 'OPTIONS_CORE_PATH'
+    printf '\t%s' "${options[@]}"
+    printf '\n'
+  fi
+
+  mapfile -t options < <(menu_presets)
+  if ((${#options[@]})); then
+    printf 'OPTIONS_MENU_CMD'
+    printf '\t%s' "${options[@]}"
+    printf '\n'
+  fi
+}
+
+# Values are written double-quoted so "$HOME/Games/roms" keeps expanding the
+# way the shipped example does. Backslashes, quotes and command substitution
+# are escaped: the file is sourced, and a directory name is not a program.
+conf_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//\`/\\\`}"
+  value="${value//\$(/\\\$(}"
+  printf '"%s"' "$value"
+}
+
+# Set one key, or remove its line when the value is empty, so the default takes
+# over again. An existing assignment is replaced where it stands, and a new one
+# lands under the commented example for that key when the file has one, which
+# keeps a config that started from arcade.conf.example readable -- and leaves
+# the explanation behind when the setting is reset away again.
+conf_set() {
+  local key="$1" value="$2" repl="" remove=0 dir tmp shown
+  [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "$EX_USAGE" "not a setting name: $key"
+  [[ -n "$value" ]] || remove=1
+  ((remove)) || repl="$key=$(conf_quote "$value")"
+
+  dir="${CONFIG_FILE%/*}"
+  shown="${CONFIG_FILE/#$HOME\//\~/}"
+  mkdir -p "$dir" || die "$EX_NO_CONFIG_DIR" "cannot create $dir"
+  if [[ ! -e "$CONFIG_FILE" ]]; then
+    if ((remove)); then return 0; fi
+    printf '%s\n' \
+      "# $shown" \
+      "#" \
+      "# Configuration for arcade-launcher and the Arcade overlay. Plain shell:" \
+      "# VAR=value, # for comments. Edit it here or in the panel's settings." \
+      "" >"$CONFIG_FILE"
+  fi
+
+  # The new line travels in the environment rather than through -v: awk expands
+  # escape sequences in a -v assignment, which would undo exactly the escaping
+  # conf_quote just did and put a live backtick back into a sourced file.
+  tmp="$(mktemp "$CONFIG_FILE.XXXXXX")"
+  ARCADE_REPL="$repl" awk -v key="$key" -v remove="$remove" '
+    BEGIN { repl = ENVIRON["ARCADE_REPL"] }
+    $0 ~ "^[ \t]*" key "=" {
+      if (!done && remove != 1) { print repl; done = 1 }
+      next
+    }
+    # A commented example line: keep it and write the setting under it, so the
+    # file a person started from still explains itself after an edit.
+    !done && remove != 1 && $0 ~ "^[ \t]*#[ \t]*" key "=" { print; print repl; done = 1; next }
+    { print }
+    END { if (!done && remove != 1) print repl }
+  ' "$CONFIG_FILE" >"$tmp" && mv "$tmp" "$CONFIG_FILE" || {
+    rm -f "$tmp"
+    die "$EX_NO_CONFIG_DIR" "cannot write $CONFIG_FILE"
+  }
+}
+
+# --------------------------------------------------------------------------
+# Controls
+#
+# RetroArch's own binds put "insert coin" on right shift, which is nobody's
+# idea of an arcade cabinet. These read and write an arcade-only retroarch.cfg
+# -- the one RETROARCH_CONFIG names -- so the binds that make a cabinet a
+# cabinet can be changed without touching the RetroArch you use for everything
+# else.
+# --------------------------------------------------------------------------
+
+readonly DEFAULT_CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/arcade-retroarch.cfg"
+readonly RETROARCH_MAIN_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/retroarch/retroarch.cfg"
+
+controls_file() {
+  if [[ -n "$RETROARCH_CONFIG" ]]; then printf '%s\n' "$RETROARCH_CONFIG"
+  else printf '%s\n' "$DEFAULT_CONTROLS_FILE"
+  fi
+}
+
+control_key() {
+  local entry
+  for entry in "${CONTROLS[@]}"; do
+    [[ "${entry%%|*}" == "$1" ]] && { printf '%s\n' "${entry#*|}"; return 0; }
+  done
+  return 1
+}
+
+# One "key = "value"" line out of a retroarch.cfg.
+cfg_get() {
+  local file="$1" key="$2" line
+  [[ -r "$file" ]] || return 1
+  line="$(grep -m1 -E "^[[:space:]]*$key[[:space:]]*=" "$file")" || return 1
+  line="${line#*=}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  line="${line%\"}"
+  line="${line#\"}"
+  printf '%s\n' "$line"
+}
+
+# The arcade profile, made if it is not there yet.
+#
+# RetroArch's --config replaces its configuration rather than layering on top
+# of it, so a file holding nothing but binds would also throw away the video
+# driver, the paths and everything else already set up. The profile therefore
+# starts as a copy of the RetroArch config in use, with only the binds changed
+# afterwards -- an arcade cabinet's settings, not a second RetroArch.
+ensure_controls_file() {
+  local file
+  file="$(controls_file)"
+  if [[ -e "$file" ]]; then printf '%s\n' "$file"; return 0; fi
+
+  mkdir -p "${file%/*}" || die "$EX_NO_CONFIG_DIR" "cannot create ${file%/*}"
+  if [[ -r "$RETROARCH_MAIN_CONFIG" ]]; then
+    cp -- "$RETROARCH_MAIN_CONFIG" "$file" || die "$EX_NO_CONFIG_DIR" "cannot write $file"
+  else
+    : >"$file" || die "$EX_NO_CONFIG_DIR" "cannot write $file"
+  fi
+
+  # RetroArch rewrites its config on exit by default, which would quietly
+  # replace these binds with whatever the last session ended up with. A cabinet
+  # profile is meant to be exactly what was set here, so it is pinned.
+  cfg_write "$file" config_save_on_exit "false"
+
+  # The profile is only used if RetroArch is told about it.
+  [[ -n "$RETROARCH_CONFIG" ]] || conf_set RETROARCH_CONFIG "$file"
+  printf '%s\n' "$file"
+}
+
+cfg_write() {
+  local file="$1" key="$2" value="$3" tmp
+  tmp="$(mktemp "$file.XXXXXX")"
+  ARCADE_REPL="$key = \"$value\"" awk -v key="$key" '
+    BEGIN { repl = ENVIRON["ARCADE_REPL"] }
+    $0 ~ "^[ \t]*" key "[ \t]*=" { if (!done) { print repl; done = 1 } next }
+    { print }
+    END { if (!done) print repl }
+  ' "$file" >"$tmp" && mv "$tmp" "$file" || {
+    rm -f "$tmp"
+    die "$EX_NO_CONFIG_DIR" "cannot write $file"
+  }
+}
+
+# Remove a bind from the profile so whatever RetroArch's own config says takes
+# over again -- the same shape of reset as removing a line from arcade.conf.
+cfg_clear() {
+  local file="$1" key="$2" tmp
+  [[ -e "$file" ]] || return 0
+  tmp="$(mktemp "$file.XXXXXX")"
+  awk -v key="$key" '$0 ~ "^[ \t]*" key "[ \t]*=" { next } { print }' "$file" >"$tmp" &&
+    mv "$tmp" "$file" || { rm -f "$tmp"; die "$EX_NO_CONFIG_DIR" "cannot write $file"; }
+}
+
+# Which preset the profile currently matches, so the panel can say "MAME
+# standard" rather than making someone read seventeen binds and decide.
+# The "id|key" entries of a named layout, or nothing if there is no such one.
+preset_entries() {
+  case "$1" in
+    mame) printf '%s\n' "${PRESET_MAME[@]}" ;;
+    retroarch) printf '%s\n' "${PRESET_RETROARCH[@]}" ;;
+    *) return 1 ;;
+  esac
+}
+
+controls_preset() {
+  local name entry id want got file matches
+  file="$(controls_file)"
+  for name in mame retroarch; do
+    matches=1
+    while IFS= read -r entry; do
+      id="${entry%%|*}"
+      want="${entry#*|}"
+      got="$(control_value "$file" "$id")"
+      [[ "$got" == "$want" ]] || { matches=0; break; }
+    done < <(preset_entries "$name")
+    ((matches)) && { printf '%s\n' "$name"; return 0; }
+  done
+  printf 'custom\n'
+}
+
+# What a control is bound to right now: the arcade profile first, then the
+# RetroArch config it was copied from, then RetroArch's own default.
+control_value() {
+  local file="$1" id="$2" key value
+  key="$(control_key "$id")" || return 0
+  value="$(cfg_get "$file" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
+  value="$(cfg_get "$RETROARCH_MAIN_CONFIG" "$key" 2>/dev/null)" && { printf '%s\n' "$value"; return 0; }
+  printf '\n'
+}
+
+control_source() {
+  local file="$1" id="$2" key
+  key="$(control_key "$id")" || return 0
+  if [[ -r "$file" ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$file"; then printf 'file\n'
+  elif [[ -r "$RETROARCH_MAIN_CONFIG" ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$RETROARCH_MAIN_CONFIG"; then printf 'retroarch\n'
+  else printf 'default\n'
+  fi
+}
+
+# "id<TAB>key<TAB>source" per control, with the profile and the preset it
+# matches on the first two lines. The panel's controls editor reads this.
+show_controls() {
+  local file entry id
+  file="$(controls_file)"
+  printf 'CONTROLS_FILE\t%s\t%s\n' "$file" "$([[ -e "$file" ]] && echo present || echo absent)"
+  printf 'PRESET\t%s\t%s\n' "$(controls_preset)" "ok"
+  for entry in "${CONTROLS[@]}"; do
+    id="${entry%%|*}"
+    printf '%s\t%s\t%s\n' "$id" "$(control_value "$file" "$id")" "$(control_source "$file" "$id")"
+  done
+}
+
+set_control() {
+  local id="$1" value="$2" key file
+  key="$(control_key "$id")" || die "$EX_USAGE" "not a control: $id"
+  file="$(ensure_controls_file)"
+  if [[ -n "$value" ]]; then cfg_write "$file" "$key" "$value"
+  else cfg_clear "$file" "$key"
+  fi
+}
+
+apply_preset() {
+  local name="$1" entry file
+  preset_entries "$name" >/dev/null || die "$EX_USAGE" "no such control layout: $name"
+  file="$(ensure_controls_file)"
+  while IFS= read -r entry; do
+    cfg_write "$file" "$(control_key "${entry%%|*}")" "${entry#*|}"
+  done < <(preset_entries "$name")
 }
 
 ensure_cache() {
@@ -572,6 +963,40 @@ main() {
       ;;
     --config)
       show_config
+      exit 0
+      ;;
+    --settings)
+      show_settings
+      exit 0
+      ;;
+    --controls)
+      show_controls
+      exit 0
+      ;;
+    --set-control)
+      shift
+      (($#)) || die "$EX_USAGE" "--set-control needs ID=KEY"
+      local bind
+      for bind in "$@"; do
+        [[ "$bind" == *=* ]] || die "$EX_USAGE" "not an ID=KEY pair: $bind"
+        set_control "${bind%%=*}" "${bind#*=}"
+      done
+      exit 0
+      ;;
+    --controls-preset)
+      shift
+      (($#)) || die "$EX_USAGE" "--controls-preset needs a layout name"
+      apply_preset "$1"
+      exit 0
+      ;;
+    --set)
+      shift
+      (($#)) || die "$EX_USAGE" "--set needs KEY=VALUE"
+      local pair
+      for pair in "$@"; do
+        [[ "$pair" == *=* ]] || die "$EX_USAGE" "not a KEY=VALUE pair: $pair"
+        conf_set "${pair%%=*}" "${pair#*=}"
+      done
       exit 0
       ;;
     --doctor)

@@ -46,6 +46,25 @@ Item {
   property string problemReport: ""
   property string statusMessage: ""
 
+  // ---- settings
+  // Everything the panel can be told is a key in arcade.conf, read back from
+  // the launcher rather than kept here: the file a person edits by hand and
+  // the editor in this panel are the same setting, never two.
+  property var settingsParsed: ({ configFile: "", configPresent: false, values: ({}) })
+  property bool settingsOpen: false
+  property int settingsIndex: 0
+  // The row being typed into, or -1. Editing is a buffer rather than a real
+  // text field because the panel owns the keyboard exclusively while it is up.
+  property int editingIndex: -1
+  property string editText: ""
+  property string settingsError: ""
+  // Values taken but not yet in the file; see Model.withPending.
+  property var pendingSettings: ({})
+  // The cabinet binds, from the arcade-only RetroArch profile.
+  property var controlsParsed: ({ file: "", present: false, preset: "custom", values: ({}) })
+  // The row waiting for a key to be pressed at it, or -1.
+  property int capturingIndex: -1
+
   readonly property var rows: Model.filterGames(root.games, root.filterText)
   readonly property var selected: root.selectedIndex >= 0 && root.selectedIndex < root.rows.length
     ? root.rows[root.selectedIndex]
@@ -76,16 +95,27 @@ Item {
   readonly property int headerHeight: Math.max(Style.space(44), Style.font.title + Style.spacing.controlPaddingY * 2)
   readonly property int footerHeight: Math.max(Style.space(60), Style.font.heading + Style.font.caption + Style.space(18))
 
+  // One editor, two files: arcade.conf decides what the panel does, the arcade
+  // RetroArch profile decides what the cabinet's buttons do.
+  readonly property var settingsRows: Model.withPending(Model.settingsRows(root.settingsParsed), root.pendingSettings)
+    .concat(Model.controlRows(root.controlsParsed))
+  readonly property var settingsRow: root.settingsIndex >= 0 && root.settingsIndex < root.settingsRows.length
+    ? root.settingsRows[root.settingsIndex]
+    : null
+  readonly property bool editing: root.editingIndex >= 0
+  readonly property bool capturing: root.capturingIndex >= 0
+
   readonly property int tileSpacing: Style.space(16)
-  // Title screens want room. The panel takes most of the screen and the tiles
-  // aim for roughly 300px each, capped at six across so a wide monitor gets
-  // bigger art rather than more of it.
-  readonly property int targetTileWidth: Math.max(Style.space(300), 240)
+  // Title screens want room. TILE_SIZE is the width a tile aims for and
+  // MAX_COLUMNS the most that go in a row, both from arcade.conf: the defaults
+  // give a wide monitor bigger art rather than more of it.
+  readonly property int targetTileWidth: Math.max(Style.space(Model.settingNumber(root.settingsParsed, "TILE_SIZE", 300)), 140)
   readonly property int cardWidth: Math.min(panel.width - Style.gapsOut * 2,
     Math.max(Style.space(1180), Math.round(panel.width * 0.72)))
   readonly property int cardHeight: Math.min(panel.height - Style.gapsOut * 2,
     Math.max(Style.space(760), Math.round(panel.height * 0.78)))
-  readonly property int columns: Model.columnsFor(grid.width, root.targetTileWidth, root.tileSpacing, 6)
+  readonly property int columns: Model.columnsFor(grid.width, root.targetTileWidth, root.tileSpacing,
+    Model.settingNumber(root.settingsParsed, "MAX_COLUMNS", 6))
   readonly property int cellWidth: root.columns > 0 ? Math.floor(grid.width / root.columns) : root.targetTileWidth
   // 4:3 for the art, plus two lines of label underneath. Arcade screens are
   // that shape, so anything else would letterbox every tile.
@@ -102,12 +132,15 @@ Item {
     root.filterText = payload.filter ? String(payload.filter) : ""
     root.selectedIndex = 0
     root.statusMessage = ""
+    root.closeSettings()
+    root.loadSettings()
     root.refresh()
 
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
+    root.flushSettings()
     root.opened = false
   }
 
@@ -138,6 +171,225 @@ Item {
 
   onGamesChanged: root.requestArt()
   onRowsChanged: root.requestArt()
+
+  // --------------------------------------------------------------- settings
+
+  // Read on every open, because the tile size and the column cap are settings
+  // too: the wall has to be laid out the way the config file says before it is
+  // drawn, not after.
+  function loadSettings() {
+    if (!settingsProc.running) settingsProc.running = true
+    if (!controlsProc.running) controlsProc.running = true
+  }
+
+  function openSettings() {
+    root.settingsOpen = true
+    root.settingsError = ""
+    root.editingIndex = -1
+    root.loadSettings()
+  }
+
+  function closeSettings() {
+    root.flushSettings()
+    root.settingsOpen = false
+    root.editingIndex = -1
+    root.settingsError = ""
+  }
+
+  function moveSetting(delta) {
+    if (root.settingsRows.length === 0) return
+    root.cancelEdit()
+    root.settingsIndex = Model.wrapIndex(root.settingsIndex, delta, root.settingsRows.length)
+    Qt.callLater(function() { settingsList.positionViewAtIndex(root.settingsIndex, ListView.Contain) })
+  }
+
+  function beginEdit(seed) {
+    var row = root.settingsRow
+    if (!row || row.kind === "choice") return
+    if (row.kind === "bind") { root.beginCapture(); return }
+    root.editingIndex = root.settingsIndex
+    root.editText = seed === undefined ? row.value : seed
+    root.settingsError = ""
+  }
+
+  function cancelEdit() {
+    root.editingIndex = -1
+    root.editText = ""
+    root.capturingIndex = -1
+    root.settingsError = ""
+  }
+
+  // Binding is done by pressing the key, the way RetroArch and every arcade
+  // front end do it: there is no spelling of "right shift" worth typing.
+  function beginCapture() {
+    var row = root.settingsRow
+    if (!row || row.kind !== "bind") return
+    root.editingIndex = -1
+    root.capturingIndex = root.settingsIndex
+    root.settingsError = ""
+  }
+
+  // Esc is how you get out of capture, so it can never be captured -- which is
+  // also why it stays RetroArch's own way out of a game.
+  function captureKey(event) {
+    var row = root.settingsRow
+    if (!row) { root.cancelEdit(); return }
+
+    var name = Model.retroarchKey(event.key, event.modifiers, event.text)
+    if (!name) {
+      root.settingsError = "RetroArch has no name for that key"
+      return
+    }
+    root.capturingIndex = -1
+    root.applyControl(row, name)
+  }
+
+  function commitEdit() {
+    var row = root.settingsRow
+    if (!row) return
+    root.applySetting(row, root.editText)
+  }
+
+  // One write, one re-read. The launcher owns the file format, so the panel
+  // never edits arcade.conf itself -- it asks for a key to be set and then
+  // asks what the file says now, which is also how a hand edit made while the
+  // panel was open shows up.
+  function applySetting(row, value) {
+    if (row && (row.kind === "bind" || row.layout)) {
+      root.cancelEdit()
+      root.applyControl(row, value)
+      return
+    }
+
+    var problem = Model.validateSetting(row, value)
+    if (problem) {
+      root.settingsError = problem
+      return
+    }
+
+    var next = Model.normalizeSetting(row, value)
+    root.cancelEdit()
+    if (next === row.value) return
+
+    var pending = ({})
+    for (var key in root.pendingSettings) pending[key] = root.pendingSettings[key]
+    pending[row.key] = next
+    root.pendingSettings = pending
+    writeTimer.restart()
+  }
+
+  // A control is one write to the arcade profile: a layout replaces the lot,
+  // a bind replaces one line, and an empty bind removes it so whatever the
+  // RetroArch config says takes over again.
+  function applyControl(row, value) {
+    if (controlProc.running) {
+      root.settingsError = "still writing the last change"
+      return
+    }
+    root.settingsError = ""
+    controlProc.command = row.layout
+      ? [root.launcher, "--controls-preset", String(value)]
+      : [root.launcher, "--set-control", row.id + "=" + String(value)]
+    controlProc.running = true
+  }
+
+  // Everything waiting, in one --set. A held arrow key steps the row far
+  // faster than a process can be started for each press; the row moves at the
+  // speed of the key and the file catches up when it stops.
+  function flushSettings() {
+    writeTimer.stop()
+    var args = Model.pendingArgs(root.pendingSettings)
+    if (args.length === 0) return
+    if (setProc.running) { writeTimer.restart(); return }
+
+    setProc.changedKeys = Object.keys(root.pendingSettings)
+    setProc.command = [root.launcher, "--set"].concat(args)
+    setProc.running = true
+    root.pendingSettings = ({})
+  }
+
+  // Back to whatever the launcher decides on its own: the line is removed from
+  // the config file rather than written with a default copied into it, so a
+  // later change of default is picked up.
+  function resetSetting() {
+    var row = root.settingsRow
+    if (!row || !Model.isOverridden(row)) return
+    root.cancelEdit()
+
+    // A control goes back to whatever RetroArch itself has bound; a layout row
+    // has nothing to reset to, since some layout is always in force.
+    if (row.layout) return
+    if (row.kind === "bind") { root.applyControl(row, ""); return }
+
+    var pending = ({})
+    for (var key in root.pendingSettings) pending[key] = root.pendingSettings[key]
+    pending[row.key] = ""
+    root.pendingSettings = pending
+    root.flushSettings()
+  }
+
+  function stepSetting(delta) {
+    var row = root.settingsRow
+    if (!row || root.editing) return
+    if (row.kind === "choice") root.applySetting(row, Model.cycleOption(row.options, row.value, delta))
+    else if (row.kind === "number") root.applySetting(row, Model.stepNumber(row, row.value, delta))
+  }
+
+  function isTypable(event) {
+    return event.text && event.text.length === 1
+      && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
+      && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))
+  }
+
+  // Keys while the editor is up. Returns whether the key was ours, which is
+  // every key once a row is being typed into: a stray arrow should not move
+  // the cursor out from under a half-typed path.
+  function settingsKey(event) {
+    var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+    var row = root.settingsRow
+
+    if (event.key === Qt.Key_Escape) {
+      if (root.editing || root.capturing) root.cancelEdit()
+      else root.closeSettings()
+      return true
+    }
+
+    if (root.capturing) {
+      root.captureKey(event)
+      return true
+    }
+
+    if (root.editing) {
+      if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.commitEdit(); return true }
+      if (Util.editsFilter(event, root.editText)) { root.editText = Util.editedFilter(event, root.editText); return true }
+      if (root.isTypable(event)) { root.editText += event.text; return true }
+      return true
+    }
+
+    if (event.key === Qt.Key_F5) { root.loadSettings(); return true }
+    if (ctrl && event.key === Qt.Key_Comma) { root.closeSettings(); return true }
+    if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N)) { root.moveSetting(1); return true }
+    if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P)) { root.moveSetting(-1); return true }
+    if (event.key === Qt.Key_Home) { root.settingsIndex = 0; return true }
+    if (event.key === Qt.Key_End) { root.settingsIndex = root.settingsRows.length - 1; return true }
+    if (event.key === Qt.Key_Right) { root.stepSetting(1); return true }
+    if (event.key === Qt.Key_Left) { root.stepSetting(-1); return true }
+    if (event.key === Qt.Key_Delete) { root.resetSetting(); return true }
+
+    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      if (row && row.kind === "choice") root.stepSetting(1)
+      else root.beginEdit()
+      return true
+    }
+    // Typing goes straight into the row rather than needing Enter first, and
+    // appends rather than replaces: a path is usually being corrected, not
+    // rewritten.
+    if (row && row.kind !== "choice" && row.kind !== "bind") {
+      if (event.key === Qt.Key_Backspace) { root.beginEdit(String(row.value).slice(0, -1)); return true }
+      if (root.isTypable(event)) { root.beginEdit(String(row.value) + event.text); return true }
+    }
+    return false
+  }
 
   // ------------------------------------------------------------- navigation
 
@@ -224,6 +476,73 @@ Item {
   }
 
   Process {
+    id: settingsProc
+    command: [root.launcher, "--settings"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.settingsParsed = Model.parseSettings(text)
+    }
+  }
+
+  Process {
+    id: controlsProc
+    command: [root.launcher, "--controls"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.controlsParsed = Model.parseControls(text)
+    }
+  }
+
+  Process {
+    id: controlProc
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text && text.trim().length > 0) root.settingsError = text.trim()
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        if (!root.settingsError) root.settingsError = "could not write the arcade profile"
+        return
+      }
+      // The first write makes the profile and points RETROARCH_CONFIG at it,
+      // so the settings above are as stale as the binds below.
+      root.loadSettings()
+    }
+  }
+
+  Process {
+    id: setProc
+    // Which keys this write was for, so the right part of the panel is thrown
+    // away when it lands.
+    property var changedKeys: []
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text && text.trim().length > 0) root.settingsError = text.trim()
+    }
+    onExited: function(exitCode) {
+      var keys = setProc.changedKeys
+      setProc.changedKeys = []
+      if (exitCode !== 0) {
+        if (!root.settingsError) root.settingsError = "could not write the config file"
+        return
+      }
+
+      root.loadSettings()
+      var library = false, artwork = false
+      for (var i = 0; i < keys.length; i++) {
+        if (Model.affectsLibrary(keys[i])) library = true
+        if (Model.affectsArtwork(keys[i])) artwork = true
+      }
+      // Artwork policy changed: forget what is known about every tile, or an
+      // ARTWORK that just went back on would never ask for anything again.
+      if (artwork) root.artMap = ({})
+      if (library) root.refresh()
+      else if (artwork) root.requestArt()
+      if (Model.pendingArgs(root.pendingSettings).length) writeTimer.restart()
+    }
+  }
+
+  Process {
     id: launchProc
     stderr: StdioCollector {
       waitForEnd: true
@@ -284,6 +603,15 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          if (root.settingsOpen) {
+            event.accepted = root.settingsKey(event)
+            return
+          }
+          if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Comma) {
+            root.openSettings()
+            event.accepted = true
+            return
+          }
           if (event.key === Qt.Key_Escape) {
             root.close()
             event.accepted = true
@@ -315,6 +643,9 @@ Item {
             root.setSelected(root.rows.length - 1)
             event.accepted = true
           } else if (event.key === Qt.Key_F5) {
+            // The config file is as likely to have changed as the ROM
+            // directory, and a hand edit should not need the panel reopened.
+            root.loadSettings()
             root.refresh()
             event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
@@ -341,7 +672,7 @@ Item {
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
-              text: "ARCADE"
+              text: root.settingsOpen ? "SETTINGS" : "ARCADE"
               color: root.accent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -354,9 +685,10 @@ Item {
             // like it before anything is typed.
             Rectangle {
               id: searchField
+              visible: !root.settingsOpen
               anchors.left: wordmark.right
               anchors.leftMargin: Style.space(16)
-              anchors.right: countPill.left
+              anchors.right: gearButton.left
               anchors.rightMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
               height: parent.height
@@ -410,6 +742,59 @@ Item {
               }
             }
 
+            // Which file is being edited, in the search line's place: every row
+            // below is a line in it, and a person who would rather edit it by
+            // hand should be told where it is.
+            Text {
+              id: configPath
+              visible: root.settingsOpen
+              anchors.left: wordmark.right
+              anchors.leftMargin: Style.space(16)
+              anchors.right: gearButton.left
+              anchors.rightMargin: Style.space(12)
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              text: Model.shortenPath(root.settingsParsed.configFile, root.home)
+                + (root.settingsParsed.configPresent ? "" : "  ·  not created yet")
+              color: root.foreground
+              opacity: 0.45
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
+            }
+
+            // The wall's way in and out of the editor, for the half of the time
+            // a pointer is already in hand.
+            Rectangle {
+              id: gearButton
+              anchors.right: countPill.left
+              anchors.rightMargin: Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              width: parent.height
+              height: parent.height
+              radius: height / 2
+              color: gearArea.containsMouse || root.settingsOpen
+                ? Util.alpha(root.accent, 0.16) : Util.alpha(root.foreground, 0.06)
+              Behavior on color { ColorAnimation { duration: 130 } }
+
+              Text {
+                anchors.centerIn: parent
+                textFormat: Text.PlainText
+                text: root.settingsOpen ? "󰅖" : "󰒓"
+                color: root.settingsOpen || gearArea.containsMouse ? root.accent : root.foreground
+                opacity: root.settingsOpen || gearArea.containsMouse ? 1 : 0.5
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+              }
+
+              MouseArea {
+                id: gearArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.settingsOpen ? root.closeSettings() : root.openSettings()
+              }
+            }
+
             Rectangle {
               id: countPill
               anchors.right: parent.right
@@ -423,10 +808,11 @@ Item {
                 id: countText
                 anchors.centerIn: parent
                 textFormat: Text.PlainText
-                text: root.loading ? "reading library…"
-                  : (root.hasProblem ? "setup needed" : Model.describeCount(root.rows.length, root.games.length))
-                color: root.hasProblem ? root.accent : root.foreground
-                opacity: root.hasProblem ? 1 : 0.7
+                text: root.settingsOpen ? "Esc goes back"
+                  : (root.loading ? "reading library…"
+                  : (root.hasProblem ? "setup needed" : Model.describeCount(root.rows.length, root.games.length)))
+                color: root.hasProblem && !root.settingsOpen ? root.accent : root.foreground
+                opacity: root.hasProblem && !root.settingsOpen ? 1 : 0.7
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -442,7 +828,7 @@ Item {
             GridView {
               id: grid
               anchors.fill: parent
-              visible: !root.hasProblem && root.rows.length > 0
+              visible: !root.settingsOpen && !root.hasProblem && root.rows.length > 0
               model: root.rows.length
               cellWidth: root.cellWidth
               cellHeight: root.cellHeight
@@ -617,7 +1003,7 @@ Item {
             // Nothing matched what was typed.
             Column {
               anchors.centerIn: parent
-              visible: !root.hasProblem && root.loaded && root.rows.length === 0
+              visible: !root.settingsOpen && !root.hasProblem && root.loaded && root.rows.length === 0
               spacing: Style.space(6)
 
               Text {
@@ -645,7 +1031,7 @@ Item {
             // Or the launcher could not get as far as a list.
             Flickable {
               anchors.fill: parent
-              visible: root.hasProblem
+              visible: !root.settingsOpen && root.hasProblem
               contentHeight: problemText.implicitHeight
               clip: true
               boundsBehavior: Flickable.StopAtBounds
@@ -659,6 +1045,177 @@ Item {
                 wrapMode: Text.WordWrap
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
+              }
+            }
+
+            // ---------------------------------------------------- the editor
+            //
+            // One row per key in arcade.conf. A row shows what is in effect and
+            // where it came from, so a value nobody chose reads as a default
+            // rather than as a setting, and Delete puts a chosen one back.
+            ListView {
+              id: settingsList
+              // A column of label-and-value reads badly across a panel this
+              // wide: the value ends up an arm's length from its name. The
+              // wall gets the whole card, the editor takes a page width.
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: Math.min(parent.width, Style.space(900))
+              visible: root.settingsOpen
+              model: root.settingsRows.length
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              spacing: Style.space(2)
+
+              delegate: Column {
+                id: settingRow
+                required property int index
+                readonly property var entry: root.settingsRows[index]
+                readonly property bool active: index === root.settingsIndex
+                readonly property bool editingThis: index === root.editingIndex
+                readonly property bool capturingThis: index === root.capturingIndex
+                readonly property bool newGroup: index === 0
+                  || root.settingsRows[index - 1].group !== entry.group
+
+                width: settingsList.width
+                spacing: Style.space(4)
+
+                Item {
+                  width: parent.width
+                  height: settingRow.newGroup ? Style.font.caption + Style.space(16) : 0
+                  visible: settingRow.newGroup
+
+                  Text {
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: Style.space(3)
+                    textFormat: Text.PlainText
+                    text: settingRow.entry ? String(settingRow.entry.group).toUpperCase() : ""
+                    color: root.foreground
+                    opacity: 0.35
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    font.letterSpacing: Style.space(2)
+                  }
+                }
+
+                Rectangle {
+                  width: parent.width
+                  height: Math.max(Style.space(42), Style.font.body + Style.space(20))
+                  radius: root.cornerRadius
+                  color: settingRow.active ? Util.alpha(root.accent, 0.12) : "transparent"
+                  border.width: settingRow.active ? Math.max(1, Style.space(1)) : 0
+                  border.color: Util.alpha(root.accent, 0.45)
+                  Behavior on color { ColorAnimation { duration: 120 } }
+
+                  // A settings row is a claim about what the panel does, so the
+                  // one thing it must never hide is that a value is merely the
+                  // default. The dot marks the rows that are the user's own.
+                  Rectangle {
+                    id: overrideDot
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(4, Style.space(6))
+                    height: width
+                    radius: width / 2
+                    color: root.accent
+                    opacity: Model.isOverridden(settingRow.entry) ? 0.9 : 0
+                  }
+
+                  Text {
+                    id: settingLabel
+                    anchors.left: overrideDot.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.round(parent.width * 0.32)
+                    textFormat: Text.PlainText
+                    text: settingRow.entry ? settingRow.entry.label : ""
+                    color: settingRow.active ? root.accent : root.foreground
+                    opacity: settingRow.active ? 1 : 0.85
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    elide: Text.ElideRight
+                  }
+
+                  // The value, or the buffer being typed into it. Editing is
+                  // drawn rather than focused: the overlay owns the keyboard
+                  // exclusively, so a real text field would have to take it
+                  // back from the panel and hand it over again.
+                  Text {
+                    id: settingValue
+                    anchors.left: settingLabel.right
+                    anchors.leftMargin: Style.space(12)
+                    anchors.right: stepHint.left
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: settingRow.capturingThis
+                      ? "press a key…"
+                      : (settingRow.editingThis
+                         ? root.editText
+                         : (settingRow.entry && (settingRow.entry.kind === "bind" || settingRow.entry.layout)
+                            ? Model.controlDisplay(settingRow.entry)
+                            : Model.displayValue(settingRow.entry, root.home)
+                              + (settingRow.entry && settingRow.entry.unit && settingRow.entry.value
+                                 ? " " + settingRow.entry.unit : "")))
+                    color: settingRow.capturingThis
+                      || (!settingRow.editingThis && settingRow.entry && settingRow.entry.state === "missing")
+                      ? root.accent : root.foreground
+                    opacity: settingRow.capturingThis || settingRow.editingThis
+                      || Model.isOverridden(settingRow.entry) ? 1 : 0.55
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    elide: settingRow.editingThis ? Text.ElideLeft : Text.ElideMiddle
+                  }
+
+                  Rectangle {
+                    id: settingCaret
+                    visible: settingRow.editingThis && !settingRow.capturingThis
+                    anchors.left: settingValue.left
+                    anchors.leftMargin: Math.min(settingValue.contentWidth + Style.space(3), settingValue.width)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(2, Style.space(2))
+                    height: Style.font.body
+                    radius: width / 2
+                    color: root.accent
+                    opacity: caretBlink.on ? 0.9 : 0
+                  }
+
+                  // Arrow keys change a choice or a number in place; only the
+                  // typed rows need Enter, so only they are told about it.
+                  Text {
+                    id: stepHint
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    visible: settingRow.active && !settingRow.editingThis
+                    text: settingRow.entry && settingRow.entry.kind === "bind"
+                      ? "Enter to bind"
+                      : (settingRow.entry && (settingRow.entry.kind === "choice" || settingRow.entry.kind === "number")
+                         ? "← →" : "Enter to edit")
+                    color: root.foreground
+                    opacity: 0.35
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onEntered: if (pointerGate.moved && !root.editing) root.settingsIndex = settingRow.index
+                    onClicked: {
+                      if (root.editing && !settingRow.editingThis) root.cancelEdit()
+                      root.settingsIndex = settingRow.index
+                      if (settingRow.entry && settingRow.entry.kind === "choice") root.stepSetting(1)
+                      else if (settingRow.entry && settingRow.entry.kind === "bind") root.beginCapture()
+                      else if (!settingRow.editingThis) root.beginEdit()
+                    }
+                  }
+                }
               }
             }
           }
@@ -685,22 +1242,38 @@ Item {
               Text {
                 width: parent.width
                 textFormat: Text.PlainText
-                text: root.statusMessage
-                  || (root.selected ? root.selected.title : (root.hasProblem ? "Setup needed" : ""))
-                color: root.statusMessage ? root.accent : root.foreground
+                text: root.settingsOpen
+                  ? (root.settingsRow ? root.settingsRow.label : "Settings")
+                  : (root.statusMessage
+                     || (root.selected ? root.selected.title : (root.hasProblem ? "Setup needed" : "")))
+                color: root.statusMessage && !root.settingsOpen ? root.accent : root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.heading
                 elide: Text.ElideRight
               }
 
+              // Under the name: what the setting does and where its value came
+              // from, or the problem with what was just typed.
               Text {
                 width: parent.width
                 textFormat: Text.PlainText
-                text: root.selected
-                  ? root.selected.rom + "  ·  " + Model.shortenPath(root.selected.path, root.home)
-                  : ""
-                color: root.foreground
-                opacity: 0.45
+                text: root.settingsOpen
+                  ? (root.settingsError
+                     || (root.capturing ? "press the key for this control — Esc cancels" : "")
+                     || Model.describeState(root.settingsRow)
+                     || (root.settingsRow
+                         ? (root.settingsRow.help ? root.settingsRow.help + "  ·  " : "")
+                           + Model.describeSource(root.settingsRow)
+                         : ""))
+                  : (root.selected
+                     ? root.selected.rom + "  ·  " + Model.shortenPath(root.selected.path, root.home)
+                     : "")
+                color: root.settingsOpen
+                  && (root.settingsError || root.capturing || Model.describeState(root.settingsRow))
+                  ? root.accent : root.foreground
+                opacity: root.settingsOpen
+                  && (root.settingsError || root.capturing || Model.describeState(root.settingsRow))
+                  ? 1 : 0.45
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideMiddle
@@ -714,9 +1287,15 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               width: Math.min(implicitWidth, parent.width * 0.42)
               horizontalAlignment: Text.AlignRight
-              text: root.hasProblem
-                ? "Enter re-checks · Esc closes"
-                : "Enter plays · ←↑↓→ selects\nF5 rescans · Esc closes"
+              text: root.settingsOpen
+                ? (root.capturing
+                   ? "press a key · Esc cancels"
+                   : (root.editing
+                      ? "Enter saves · Esc cancels"
+                      : "←→ changes · Enter edits\nDel resets · Esc goes back"))
+                : (root.hasProblem
+                   ? "Enter re-checks · Ctrl+, settings · Esc closes"
+                   : "Enter plays · ←↑↓→ selects\nCtrl+, settings · F5 rescans · Esc closes")
               color: root.foreground
               opacity: 0.4
               font.family: root.fontFamily
@@ -727,6 +1306,14 @@ Item {
         }
       }
     }
+  }
+
+  // Long enough that a run of arrow presses is one write, short enough that
+  // the file is current by the time anyone could look at it.
+  Timer {
+    id: writeTimer
+    interval: 220
+    onTriggered: root.flushSettings()
   }
 
   // The caret blink, kept out of the layout so nothing above re-lays out twice

@@ -131,6 +131,164 @@ check("digits count", M.initials("1942"), "1")
 check("punctuation is skipped", M.initials("Snow Bros.: Nick & Tom"), "SBN")
 check("nothing at all", M.initials(""), "?")
 
+// ----------------------------------------------------------------- settings
+
+const SETTINGS = [
+  "CONFIG_FILE\t/home/kimm/.config/omarchy/arcade.conf\tpresent",
+  "ROM_DIR\t/home/kimm/Games/neogeo\tfile\tok",
+  "ROM_EXTS\tzip 7z chd\tdefault\tok",
+  "CORE_PATH\t/usr/lib/libretro/fbneo_libretro.so\tauto\tok",
+  "RETROARCH_CONFIG\t\tdefault\tok",
+  "ARTWORK\toff\tfile\tok",
+  "ART_KINDS\tsnaps\tfile\tok",
+  "TILE_SIZE\t240\tfile\tok",
+  "MAX_COLUMNS\t6\tdefault\tok",
+  "MENU_CMD\t\tauto\tok",
+  "OPTIONS_CORE_PATH\t/usr/lib/libretro/fbneo_libretro.so\t/usr/lib/libretro/mame_libretro.so",
+].join("\n")
+
+const parsed = M.parseSettings(SETTINGS)
+check("the config path is picked out", parsed.configFile, "/home/kimm/.config/omarchy/arcade.conf")
+check("and whether it exists", parsed.configPresent, true)
+check("a value and its source", parsed.values.ROM_DIR,
+      { value: "/home/kimm/Games/neogeo", source: "file", state: "ok" })
+check("an empty value is still a value", parsed.values.RETROARCH_CONFIG,
+      { value: "", source: "default", state: "ok" })
+check("a blank line is ignored", M.parseSettings("\n\nROM_DIR\t/x\tfile").values.ROM_DIR,
+      { value: "/x", source: "file", state: "ok" })
+check("an older report with no state column still reads",
+      M.parseSettings("ROM_DIR\t/x\tfile").values.ROM_DIR.state, "ok")
+check("the offered options are picked out", parsed.options.CORE_PATH.length, 2)
+check("an options line is not a setting", parsed.values.OPTIONS_CORE_PATH, undefined)
+
+const rows = M.settingsRows(parsed)
+const byKey = Object.fromEntries(rows.map((r) => [r.key, r]))
+check("every schema row is present", rows.length, M.settingsSchema().length)
+check("rows carry the reported value", byKey.ROM_DIR.value, "/home/kimm/Games/neogeo")
+check("a key the launcher did not report is empty", byKey.ART_DIR.value, "")
+check("a hand-edited choice keeps its value as an option",
+      byKey.ART_KINDS.options.includes("snaps"), true)
+check("only a file-set row counts as overridden",
+      [M.isOverridden(byKey.ROM_DIR), M.isOverridden(byKey.CORE_PATH)], [true, false])
+check("an autodetected core says so", M.describeSource(byKey.CORE_PATH), "autodetected")
+check("an empty autodetect says nothing was found", M.describeSource(byKey.MENU_CMD), "nothing found")
+check("an empty core reads as autodetect",
+      M.displayValue({ key: "CORE_PATH", value: "", kind: "path" }, HOME), "autodetect")
+check("a path is shown under the home tilde", M.displayValue(byKey.ROM_DIR, HOME), "~/Games/neogeo")
+
+check("a number out of range is refused", M.validateSetting(byKey.MAX_COLUMNS, "99"), "at most 12")
+check("a number below range is refused", M.validateSetting(byKey.TILE_SIZE, "10"), "at least 140")
+check("a non-number is refused", M.validateSetting(byKey.TILE_SIZE, "big"), "a whole number")
+check("a number in range is fine", M.validateSetting(byKey.TILE_SIZE, "320"), "")
+check("an empty ROM directory is refused", M.validateSetting(byKey.ROM_DIR, "  "), "a directory is required")
+check("an empty core is fine", M.validateSetting(byKey.CORE_PATH, ""), "")
+check("a tab is refused", M.validateSetting(byKey.ROM_DIR, "/a\tb"), "no tabs or newlines")
+check("extensions must look like extensions", M.validateSetting(byKey.ROM_EXTS, "zip;rm -rf"),
+      "extensions, space separated")
+
+check("extensions are stored bare", M.normalizeSetting(byKey.ROM_EXTS, " *.ZIP  .7z "), "zip 7z")
+check("a number is stored without padding", M.normalizeSetting(byKey.TILE_SIZE, " 320 "), "320")
+check("a path keeps its shape", M.normalizeSetting(byKey.ROM_DIR, " $HOME/Games/roms "), "$HOME/Games/roms")
+
+check("setting an argument", M.settingArg("ROM_DIR", "~/roms"), "ROM_DIR=~/roms")
+check("resetting is an empty argument", M.settingArg("TILE_SIZE", ""), "TILE_SIZE=")
+
+check("a choice steps forward", M.cycleOption(["on", "off"], "on", 1), "off")
+check("and wraps backwards", M.cycleOption(["on", "off"], "on", -1), "off")
+check("an unknown value starts at the first", M.cycleOption(["on", "off"], "maybe", 1), "off")
+check("a number steps by its step", M.stepNumber(byKey.TILE_SIZE, "240", 1), "260")
+check("and stops at the ends", M.stepNumber(byKey.MAX_COLUMNS, "12", 1), "12")
+check("an empty number starts at the minimum", M.stepNumber(byKey.TILE_SIZE, "", 1), "160")
+
+check("the panel reads its own sizes", M.settingNumber(parsed, "TILE_SIZE", 300), 240)
+check("a missing one falls back", M.settingNumber(parsed, "ART_DIR", 300), 300)
+check("the ROM directory invalidates the library", M.affectsLibrary("ROM_DIR"), true)
+check("the tile size does not", M.affectsLibrary("TILE_SIZE"), false)
+check("artwork policy invalidates the art map", M.affectsArtwork("ART_KINDS"), true)
+
+check("an offered core row becomes a list", byKey.CORE_PATH.kind, "choice")
+check("with autodetect leading it", byKey.CORE_PATH.options[0], "")
+check("and the installed cores after", byKey.CORE_PATH.options.length, 3)
+check("a row with nothing offered stays typed", byKey.MENU_CMD.kind, "text")
+check("autodetect is a legal choice there", M.validateSetting(byKey.CORE_PATH, ""), "")
+check("but not for a plain choice", M.validateSetting(byKey.ARTWORK, ""), "pick one")
+check("cycling off autodetect picks the first core",
+      M.cycleOption(byKey.CORE_PATH.options, "", 1), "/usr/lib/libretro/fbneo_libretro.so")
+
+const MISSING = M.settingsRows(M.parseSettings(
+  "ROM_DIR\t/nowhere\tfile\tmissing\nCORE_PATH\t/nowhere/core.so\tfile\tmissing"))
+check("a directory that is not there is called out",
+      M.describeState(MISSING.find((r) => r.key === "ROM_DIR")), "no such directory")
+check("and a file that is not there", M.describeState(MISSING.find((r) => r.key === "CORE_PATH")),
+      "no such file")
+check("a row that is fine says nothing", M.describeState(byKey.ROM_DIR), "")
+
+check("a pending value shows before it is written",
+      M.withPending(rows, { TILE_SIZE: "280" }).find((r) => r.key === "TILE_SIZE").value, "280")
+check("and reads as the user's own", M.withPending(rows, { TILE_SIZE: "280" })
+      .find((r) => r.key === "TILE_SIZE").source, "file")
+check("a pending reset reads as a default again",
+      M.withPending(rows, { ROM_DIR: "" }).find((r) => r.key === "ROM_DIR").source, "default")
+check("rows with nothing pending are untouched",
+      M.withPending(rows, { TILE_SIZE: "280" }).find((r) => r.key === "ROM_EXTS").value, "zip 7z chd")
+check("everything waiting goes in one write",
+      M.pendingArgs({ TILE_SIZE: "280", MAX_COLUMNS: "4" }).sort(),
+      ["MAX_COLUMNS=4", "TILE_SIZE=280"])
+
+// ----------------------------------------------------------------- controls
+
+const CONTROLS = [
+  "CONTROLS_FILE\t/home/kimm/.config/omarchy/arcade-retroarch.cfg\tpresent",
+  "PRESET\tmame\tok",
+  "coin1\tnum5\tfile",
+  "start1\tnum1\tfile",
+  "b1\tctrl\tfile",
+  "coin2\tnul\tretroarch",
+  "exit\tescape\tretroarch",
+].join("\n")
+
+const controls = M.parseControls(CONTROLS)
+check("the profile is picked out", controls.present, true)
+check("and the layout it matches", controls.preset, "mame")
+check("a bind and where it came from", controls.values.coin1, { key: "num5", source: "file" })
+check("no profile yet means no layout was chosen",
+      M.controlRows(M.parseControls("CONTROLS_FILE\t/x\tabsent\nPRESET\tretroarch\tok"))[0].source,
+      "default")
+
+const cRows = M.controlRows(controls)
+const cByKey = Object.fromEntries(cRows.map((r) => [r.key, r]))
+check("the layout leads the controls", cRows[0].key, "CONTROLS_PRESET")
+check("every control has a row", cRows.length, M.controlsSchema().length + 1)
+check("a control row is a bind", cByKey.CONTROL_coin1.kind, "bind")
+check("carrying its key", cByKey.CONTROL_coin1.value, "num5")
+check("a bind from RetroArch's own config says so",
+      M.describeSource(cByKey.CONTROL_exit), "from your RetroArch config")
+check("one set for the arcade says that", M.describeSource(cByKey.CONTROL_coin1), "set for the arcade")
+
+check("the coin key reads as the 5 you press", M.controlDisplay(cByKey.CONTROL_coin1), "5")
+check("a modifier says which side", M.controlDisplay(cByKey.CONTROL_b1), "Left Ctrl")
+check("an unbound control says so", M.controlDisplay(cByKey.CONTROL_coin2), "unbound")
+check("the layout row shows the layout's name", M.controlDisplay(cRows[0]), "MAME standard")
+check("a hand-edited profile is a layout of its own",
+      M.layoutLabel("custom"), "custom")
+
+// Qt key codes in, retroarch.cfg key names out.
+const KEYPAD = 0x20000000
+check("a letter is itself", M.retroarchKey(0x5a, 0, "z"), "z")
+check("shift does not change the bind", M.retroarchKey(0x5a, 0x02000000, "Z"), "z")
+check("a digit is a num", M.retroarchKey(0x35, 0, "5"), "num5")
+check("a keypad digit is a keypad", M.retroarchKey(0x35, KEYPAD, "5"), "keypad5")
+check("shift does not change a digit either", M.retroarchKey(0x35, 0x02000000, "%"), "num5")
+check("space", M.retroarchKey(0x20, 0, " "), "space")
+check("left ctrl", M.retroarchKey(0x01000021, 0x04000000, ""), "ctrl")
+check("return is enter", M.retroarchKey(0x01000004, 0, "\r"), "enter")
+check("the keypad's is not", M.retroarchKey(0x01000005, KEYPAD, "\r"), "kp_enter")
+check("an arrow", M.retroarchKey(0x01000012, 0, ""), "left")
+check("f-keys count up", [M.retroarchKey(0x01000030, 0, ""), M.retroarchKey(0x0100003b, 0, "")],
+      ["f1", "f12"])
+check("punctuation has a name", M.retroarchKey(0x2d, 0, "-"), "minus")
+check("a key with no name binds nothing", M.retroarchKey(0x01000022, 0, ""), "")
+
 // ------------------------------------------------------------------ report
 
 if (failures.length) {
