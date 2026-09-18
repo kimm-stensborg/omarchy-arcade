@@ -148,6 +148,63 @@ check("the tile says which version it is", M.tileNote(byRom.snowbroj, 500 + 60),
 check("and the footer how to reach the rest", M.versionNote(byRom.snowbroj), "Tab for the other 2 versions")
 check("a game with one version says nothing about it", M.versionNote(byRom.pang), "")
 
+// -------------------------------------------------------------- the stick
+
+const PAD = M.parseController([
+  "PAD\tNintendo Co., Ltd. Pro Controller\t057e:2009\t/dev/input/event28\that",
+  "PROFILE\t/usr/share/libretro/autoconfig/udev/Nintendo Switch Pro Controller.cfg\tNintendo Switch Pro Controller",
+  "BIND\tb\t0\tB", "BIND\ta\t1\tA", "BIND\tx\t2\tX", "BIND\ty\t3\tY",
+  "BIND\tselect\t9\tMinus", "BIND\tstart\t10\tPlus",
+  "BIND\tup\th0up\tD-Pad Up", "BIND\tl\t5\tL", "BIND\tr\t6\tR", "BIND\tl2\t7\tZL",
+  "BIND\tmenu_toggle\t11\tHome",
+].join("\n"))
+
+check("the controller is read", PAD.pad.name, "Nintendo Co., Ltd. Pro Controller")
+check("with its profile", PAD.profile.name, "Nintendo Switch Pro Controller")
+check("Button 1 is the stick's B", M.controlPadLabel(PAD, "b1"), "B")
+check("Button 3 its Y", M.controlPadLabel(PAD, "b3"), "Y")
+check("Button 6 its L", M.controlPadLabel(PAD, "b6"), "L")
+check("coin is Minus", M.controlPadLabel(PAD, "coin1"), "Minus")
+check("directions are the lever", M.controlPadLabel(PAD, "up1"), "lever")
+check("player 2 is not on player 1's stick", M.controlPadLabel(PAD, "coin2"), "")
+
+check("never launched with it, it is ready but not confirmed", M.controllerStatus(PAD).state, "ready")
+const SEEN = Object.assign({}, PAD, { seen: [{ port: 1, name: "Nintendo Co., Ltd. Pro Controller" }] })
+check("RetroArch's word at the last launch confirms it", M.controllerStatus(SEEN).state, "ok")
+check("no controller is a problem", M.controllerStatus(M.parseController("")).state, "problem")
+check("nor is one RetroArch has no profile for",
+      M.controllerStatus(M.parseController("PAD\tOdd Pad\t1234:5678\t/dev/input/event9\that")).text,
+      "RetroArch has no profile for “Odd Pad”, so games will not know its buttons.")
+check("a lever reporting as an analog stick is caught",
+      M.controllerStatus(M.parseController("PAD\tX\t1:2\t/e\tnone\nPROFILE\t/p\tX")).state, "problem")
+
+let pressed = M.padEvent({ held: {}, last: null, presses: 0 }, PAD, "button\t0\t1")
+check("pressing B lights Button 1", M.controlHeld(pressed, "b1"), true)
+check("and says so", [pressed.last.label, pressed.last.meaning], ["B", "Button 1"])
+check("with what fighters make of it", pressed.last.note, "“Light Kick” in 3-punch, 3-kick fighters.")
+pressed = M.padEvent(pressed, PAD, "button\t0\t0")
+check("letting go puts it out", M.controlHeld(pressed, "b1"), false)
+check("but remembers what it was", pressed.last.meaning, "Button 1")
+check("the lever is a direction",
+      M.padEvent(pressed, PAD, "hat\tup\t1").last.meaning, "Up")
+check("coin is coin", M.padEvent(pressed, PAD, "button\t9\t1").last.meaning, "Insert coin")
+check("ZL does nothing in arcade games",
+      M.padEvent(pressed, PAD, "button\t7\t1").last.meaning, "not used by arcade games")
+check("an analog stick is flagged",
+      M.padEvent(pressed, PAD, "axis\t-0\t1").last.meaning, "not seen by arcade games")
+check("a button no profile binds says so",
+      M.padEvent(pressed, PAD, "button\t4\t1").last.meaning, "not bound in RetroArch")
+check("Home opens RetroArch's menu", M.padEvent(pressed, PAD, "button\t11\t1").last.meaning, "RetroArch menu")
+check("a garbled line changes nothing", M.padEvent(pressed, PAD, "nonsense"), null)
+
+const padRows = M.controllerRows(PAD)
+check("the editor names the profile the stick is known by", padRows[0].value, "Nintendo Switch Pro Controller")
+check("and says whether it will work", M.describeSource(padRows[0]),
+      "RetroArch will use its Nintendo Switch Pro Controller profile. Start a game once to confirm.")
+check("a problem is shown as one", M.describeState(M.controllerRows(M.parseController(""))[0]),
+      "No controller connected. Plug it in and press F5.")
+check("the test comes next", padRows[1].kind, "padtest")
+
 // ----------------------------------------------------------------- matching
 
 check("empty query keeps everything", titles(M.filterGames(games, "")).length, 6)

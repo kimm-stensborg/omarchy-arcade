@@ -119,7 +119,18 @@ Item {
   // One editor, two files: arcade.conf decides what the panel does, the arcade
   // RetroArch profile decides what the cabinet's buttons do.
   readonly property var settingsRows: Model.withPending(Model.settingsRows(root.settingsParsed), root.pendingSettings)
+    .concat(Model.controllerRows(root.controllerParsed))
     .concat(Model.controlRows(root.controlsParsed))
+
+  // ---- the stick
+  // What `arcade-launcher --controller` said: the controller RetroArch will
+  // give player 1, the profile it matches, and which button does what.
+  property var controllerParsed: Model.parseController("")
+  // The live test: presses read straight off the device, numbered the way
+  // RetroArch numbers them and looked up in the same profile.
+  property bool padTesting: false
+  property var padState: ({ held: ({}), last: null, presses: 0 })
+  readonly property string padTool: root.pluginDir + "/bin/arcade-pad"
   readonly property var settingsRow: root.settingsIndex >= 0 && root.settingsIndex < root.settingsRows.length
     ? root.settingsRows[root.settingsIndex]
     : null
@@ -163,6 +174,7 @@ Item {
   }
 
   function close() {
+    root.stopPadTest()
     root.flushSettings()
     root.opened = false
   }
@@ -202,6 +214,7 @@ Item {
   // drawn, not after.
   function loadSettings() {
     if (!settingsProc.running) settingsProc.running = true
+    if (!controllerProc.running) controllerProc.running = true
     if (!controlsProc.running) controlsProc.running = true
   }
 
@@ -212,7 +225,23 @@ Item {
     root.loadSettings()
   }
 
+  function startPadTest() {
+    var pad = root.controllerParsed.pad
+    if (!pad) { root.settingsError = "no controller connected"; return }
+    root.cancelEdit()
+    root.padState = ({ held: ({}), last: null, presses: 0 })
+    padWatch.command = [root.padTool, "--watch", pad.device]
+    padWatch.running = true
+    root.padTesting = true
+  }
+
+  function stopPadTest() {
+    padWatch.running = false
+    root.padTesting = false
+  }
+
   function closeSettings() {
+    root.stopPadTest()
     root.flushSettings()
     root.settingsOpen = false
     root.editingIndex = -1
@@ -228,8 +257,9 @@ Item {
 
   function beginEdit(seed) {
     var row = root.settingsRow
-    if (!row || row.kind === "choice") return
+    if (!row || row.kind === "choice" || row.kind === "padinfo") return
     if (row.kind === "bind") { root.beginCapture(); return }
+    if (row.kind === "padtest") { root.startPadTest(); return }
     root.editingIndex = root.settingsIndex
     root.editText = seed === undefined ? row.value : seed
     root.settingsError = ""
@@ -407,7 +437,7 @@ Item {
     // Typing goes straight into the row rather than needing Enter first, and
     // appends rather than replaces: a path is usually being corrected, not
     // rewritten.
-    if (row && row.kind !== "choice" && row.kind !== "bind") {
+    if (row && ["choice", "bind", "padinfo", "padtest"].indexOf(row.kind) < 0) {
       if (event.key === Qt.Key_Backspace) { root.beginEdit(String(row.value).slice(0, -1)); return true }
       if (root.isTypable(event)) { root.beginEdit(String(row.value) + event.text); return true }
     }
@@ -515,6 +545,31 @@ Item {
       waitForEnd: true
       onStreamFinished: root.settingsParsed = Model.parseSettings(text)
     }
+  }
+
+  Process {
+    id: controllerProc
+    command: [root.launcher, "--controller"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.controllerParsed = Model.parseController(text)
+    }
+  }
+
+  Process {
+    id: padWatch
+    stdout: SplitParser {
+      onRead: function(line) {
+        var next = Model.padEvent(root.padState, root.controllerParsed, line)
+        if (next) root.padState = next
+      }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text && text.trim().length > 0) root.settingsError = text.trim()
+    }
+    // Unplugged mid-test: the device is gone, so is the test.
+    onExited: if (root.padTesting) { root.padTesting = false; root.loadSettings() }
   }
 
   Process {
@@ -636,6 +691,13 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          // The test owns the keyboard while it runs: the stick is what is
+          // being tested, and Esc is the way back.
+          if (root.padTesting) {
+            if (event.key === Qt.Key_Escape) root.stopPadTest()
+            event.accepted = true
+            return
+          }
           if (root.settingsOpen) {
             event.accepted = root.settingsKey(event)
             return
@@ -1119,6 +1181,110 @@ Item {
               }
             }
 
+            // ------------------------------------------------- the stick test
+            //
+            // Every press on the stick, read as RetroArch will read it: the big
+            // line says what the last button does in a game, and the board
+            // below lights each cabinet control while it is held -- so a
+            // button that lights nothing, or the wrong thing, shows at once.
+            Item {
+              id: padBoard
+              visible: root.settingsOpen && root.padTesting
+              anchors.top: parent.top
+              anchors.bottom: parent.bottom
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: Math.min(parent.width, Style.space(900))
+
+              Column {
+                id: padHeadline
+                anchors.top: parent.top
+                anchors.topMargin: Style.space(24)
+                width: parent.width
+                spacing: Style.space(8)
+
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  textFormat: Text.PlainText
+                  text: root.padState.last
+                    ? root.padState.last.label + "  →  " + root.padState.last.meaning
+                    : "Press a button on the stick"
+                  color: root.padState.last && !root.padState.last.ok ? root.accent : root.foreground
+                  opacity: root.padState.last ? 1 : 0.6
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  font.bold: !!root.padState.last
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  textFormat: Text.PlainText
+                  text: root.padState.last
+                    ? (root.padState.last.note || " ")
+                    : (root.controllerParsed.profile ? "Read as " + root.controllerParsed.profile.name
+                       + ", the way RetroArch will read it in a game." : " ")
+                  color: root.foreground
+                  opacity: 0.5
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                }
+              }
+
+              Grid {
+                id: padGrid
+                anchors.top: padHeadline.bottom
+                anchors.topMargin: Style.space(28)
+                anchors.horizontalCenter: parent.horizontalCenter
+                columns: 6
+                spacing: Style.space(10)
+                readonly property int cell: Math.floor((padBoard.width - spacing * 5) / 6)
+
+                Repeater {
+                  model: Model.testControls()
+
+                  Rectangle {
+                    required property string modelData
+                    readonly property bool lit: Model.controlHeld(root.padState, modelData)
+                    readonly property string stick: Model.controlPadLabel(root.controllerParsed, modelData)
+                    width: padGrid.cell
+                    height: Math.round(padGrid.cell * 0.62)
+                    radius: root.cornerRadius
+                    color: lit ? root.accent : root.tileSurface
+                    border.width: Math.max(1, Style.space(1))
+                    border.color: lit ? root.accent : (stick ? root.tileBorder : Util.alpha(root.accent, 0.5))
+                    Behavior on color { ColorAnimation { duration: 60 } }
+
+                    Column {
+                      anchors.centerIn: parent
+                      spacing: Style.space(4)
+
+                      Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        textFormat: Text.PlainText
+                        text: Model.controlName(modelData)
+                        color: lit ? root.background : root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.body
+                        font.bold: true
+                      }
+                      Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        textFormat: Text.PlainText
+                        text: stick || "not on the stick"
+                        color: lit ? root.background : (stick ? root.foreground : root.accent)
+                        opacity: lit ? 0.85 : 0.55
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
             // ---------------------------------------------------- the editor
             //
             // One row per key in arcade.conf. A row shows what is in effect and
@@ -1133,7 +1299,7 @@ Item {
               anchors.bottom: parent.bottom
               anchors.horizontalCenter: parent.horizontalCenter
               width: Math.min(parent.width, Style.space(900))
-              visible: root.settingsOpen
+              visible: root.settingsOpen && !root.padTesting
               model: root.settingsRows.length
               clip: true
               boundsBehavior: Flickable.StopAtBounds
@@ -1229,6 +1395,8 @@ Item {
                          ? root.editText
                          : (settingRow.entry && (settingRow.entry.kind === "bind" || settingRow.entry.layout)
                             ? Model.controlDisplay(settingRow.entry)
+                              + (settingRow.entry.kind === "bind" && Model.controlPadLabel(root.controllerParsed, settingRow.entry.id)
+                                 ? "   ·   stick: " + Model.controlPadLabel(root.controllerParsed, settingRow.entry.id) : "")
                             : Model.displayValue(settingRow.entry, root.home)
                               + (settingRow.entry && settingRow.entry.unit && settingRow.entry.value
                                  ? " " + settingRow.entry.unit : "")))
@@ -1266,6 +1434,10 @@ Item {
                     visible: settingRow.active && !settingRow.editingThis
                     text: settingRow.entry && settingRow.entry.kind === "bind"
                       ? "Enter to bind"
+                      : settingRow.entry && settingRow.entry.kind === "padtest"
+                      ? "Enter to start"
+                      : settingRow.entry && settingRow.entry.kind === "padinfo"
+                      ? "F5 re-checks"
                       : (settingRow.entry && (settingRow.entry.kind === "choice" || settingRow.entry.kind === "number")
                          ? "← →" : "Enter to edit")
                     color: root.foreground
@@ -1283,6 +1455,8 @@ Item {
                       root.settingsIndex = settingRow.index
                       if (settingRow.entry && settingRow.entry.kind === "choice") root.stepSetting(1)
                       else if (settingRow.entry && settingRow.entry.kind === "bind") root.beginCapture()
+                      else if (settingRow.entry && settingRow.entry.kind === "padtest") root.startPadTest()
+                      else if (settingRow.entry && settingRow.entry.kind === "padinfo") {}
                       else if (!settingRow.editingThis) root.beginEdit()
                     }
                   }
@@ -1313,7 +1487,9 @@ Item {
               Text {
                 width: parent.width
                 textFormat: Text.PlainText
-                text: root.settingsOpen
+                text: root.padTesting
+                  ? "Controller test" + (root.controllerParsed.pad ? " · " + root.controllerParsed.pad.name : "")
+                  : root.settingsOpen
                   ? (root.settingsRow ? root.settingsRow.label : "Settings")
                   : (root.statusMessage
                      || (root.selected ? root.selected.title : (root.hasProblem ? "Setup needed" : "")))
@@ -1328,13 +1504,15 @@ Item {
               Text {
                 width: parent.width
                 textFormat: Text.PlainText
-                text: root.settingsOpen
+                text: root.padTesting
+                  ? Model.controllerStatus(root.controllerParsed).text
+                  : root.settingsOpen
                   ? (root.settingsError
                      || (root.capturing ? "press the key for this control — Esc cancels" : "")
                      || Model.describeState(root.settingsRow)
                      || (root.settingsRow
-                         ? (root.settingsRow.help ? root.settingsRow.help + "  ·  " : "")
-                           + Model.describeSource(root.settingsRow)
+                         ? [root.settingsRow.help || "", Model.describeSource(root.settingsRow)]
+                             .filter(function(part) { return part.length > 0 }).join("  ·  ")
                          : ""))
                   : (root.selected
                      ? root.selected.rom + "  ·  "
@@ -1362,7 +1540,9 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               width: Math.min(implicitWidth, parent.width * 0.42)
               horizontalAlignment: Text.AlignRight
-              text: root.settingsOpen
+              text: root.padTesting
+                ? "press buttons on the stick\nEsc ends the test"
+                : root.settingsOpen
                 ? (root.capturing
                    ? "press a key · Esc cancels"
                    : (root.editing

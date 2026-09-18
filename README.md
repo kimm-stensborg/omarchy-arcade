@@ -306,7 +306,7 @@ settings fixes that, and the first row does it in one press:
 | Layout | Coin | Start | Stick | Buttons 1-6 |
 | --- | --- | --- | --- | --- |
 | **MAME standard** | `5` | `1` | arrows | `Ctrl` `Alt` `Space` `Shift` `Z` `X` |
-| **RetroArch default** | `RShift` | `Enter` | arrows | `A` `S` `Q` `Z` `X` `W` |
+| **RetroArch default** | `RShift` | `Enter` | arrows | `Z` `X` `A` `S` `W` `Q` |
 
 Under it is a row per control — coin, start, the four directions, buttons 1 to
 6, player two's coin and start, and the exit, pause and menu hotkeys. Select
@@ -314,8 +314,51 @@ one, press `Enter`, then **press the key you want**; `Esc` cancels rather than
 binding, which is also why `Esc` stays RetroArch's own way out of a game.
 `Delete` hands a control back to whatever your RetroArch config binds it to.
 
-Button numbering follows FBNeo's six-button arcade panel, which RetroArch lays
-out as `Y X L` over `B A R` — button 1 is the RetroPad's Y.
+Buttons are numbered the way FBNeo numbers them in its default ("Classic")
+layout: a game's Button 1 is the RetroPad's **B**, then **A**, **Y**, **X**,
+**R**, **L**. Fighting games with three punches and three kicks are the one
+exception: FBNeo puts the punches on the top row (`Y` `X` `L`) and the kicks on
+the bottom (`B` `A` `R`), so the test below names both. Up to 1.2.0 the panel
+numbered buttons for fighting games only, which put the MAME layout's `Ctrl`
+on most games' Button 3. A saved MAME layout is renumbered automatically.
+
+### Your stick
+
+The **Controller** section of the settings shows the game controller RetroArch
+will give player 1, the RetroArch profile it matches, and a verdict:
+
+- **RetroArch set it up as player 1 at the last launch**: RetroArch's own log
+  said so (`[Autoconf] … configured in port 1`) the last time a game started.
+  That is the confirmation.
+- **Start a game once to confirm**: the stick is plugged in and RetroArch has a
+  profile for it, but no game has been started with it yet.
+- **A problem**, in the accent colour: nothing plugged in, no RetroArch profile
+  for it (games would not know its buttons), or a lever that reports as an
+  analog stick. FBNeo ignores the analog stick, so the lever does nothing in
+  games; set the stick's switch to D-pad.
+
+Every control row also says which stick button does that job, for example
+`Insert coin  Right Shift · stick: Minus`.
+
+**Test the stick** opens a live board. Press anything on the stick and the
+panel says what it does in a game — `B → Button 1`, and `Light Kick` in
+3-punch, 3-kick fighters — while the matching tile lights up for as long as
+it is held. A button that lights nothing is called out: not bound in RetroArch,
+not used by arcade games (`ZL`, the stick clicks), or the analog stick. `Esc`
+ends the test.
+
+The test reads the stick directly (`bin/arcade-pad`, no root needed). It numbers
+buttons the way RetroArch's udev driver does and looks them up in the same
+profile, so what it shows is what the game gets.
+
+An 8BitDo Arcade Stick on its **S** switch presents as a Nintendo Switch Pro
+Controller, and RetroArch's stock profile for it keeps Nintendo's letters. On
+that setting RetroPad `B` is the stick's `B`, and the labels in the panel
+match what is printed on the buttons.
+
+```bash
+arcade-launcher --controller   # PAD, PROFILE, BIND and SEEN lines, tab separated
+```
 
 ### Where the binds live
 
@@ -415,6 +458,7 @@ manifest.json                  plugin manifest
 bin/arcade-launcher            lists and launches; the panel's whole backend
 bin/arcade-rdb-dump            libretro .rdb -> TSV extractor (python3, no deps)
 bin/arcade-artwork             title-screen fetcher and cache (python3, no deps)
+bin/arcade-pad                 finds the stick, matches RetroArch's profile, runs the test
 share/arcade-titles.tsv        title overrides, used until you have your own
 share/arcade.conf.example      commented config template
 hypr/hyprland.conf.snippet     plain-Hyprland window rules

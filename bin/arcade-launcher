@@ -45,9 +45,11 @@ readonly SETTING_KEYS=(
 )
 
 # The cabinet controls, in the order the panel lists them: an id the panel uses
-# and the retroarch.cfg key it writes. RetroArch speaks RetroPad, so a stick's
-# buttons arrive as face buttons -- FBNeo lays a six-button arcade panel out as
-# Y X L / B A R, which is why they are numbered in that order here.
+# and the retroarch.cfg key it writes. RetroArch speaks RetroPad, and FBNeo's
+# default ("Classic") layout gives a game's Button 1 to B, 2 to A, 3 to Y, 4 to
+# X, 5 to R and 6 to L -- so that is what the numbers here mean. (Fighting
+# games with three punches and three kicks are the exception: punches on the
+# top row, Y X L, kicks on the bottom, B A R.)
 readonly CONTROLS=(
   "coin1|input_player1_select"
   "start1|input_player1_start"
@@ -55,12 +57,12 @@ readonly CONTROLS=(
   "down1|input_player1_down"
   "left1|input_player1_left"
   "right1|input_player1_right"
-  "b1|input_player1_y"
-  "b2|input_player1_x"
-  "b3|input_player1_l"
-  "b4|input_player1_b"
-  "b5|input_player1_a"
-  "b6|input_player1_r"
+  "b1|input_player1_b"
+  "b2|input_player1_a"
+  "b3|input_player1_y"
+  "b4|input_player1_x"
+  "b5|input_player1_r"
+  "b6|input_player1_l"
   "coin2|input_player2_select"
   "start2|input_player2_start"
   "exit|input_exit_emulator"
@@ -82,7 +84,7 @@ readonly PRESET_MAME=(
 readonly PRESET_RETROARCH=(
   "coin1|rshift" "start1|enter"
   "up1|up" "down1|down" "left1|left" "right1|right"
-  "b1|a" "b2|s" "b3|q" "b4|z" "b5|x" "b6|w"
+  "b1|z" "b2|x" "b3|a" "b4|s" "b5|w" "b6|q"
   "coin2|nul" "start2|nul"
   "exit|escape" "pause|p" "menu|f1"
 )
@@ -167,6 +169,7 @@ load_config() {
 
   [[ -n "${MENU_CMD:-}" ]] || MENU_CMD="$(detect_menu)"
   migrate_controls
+  migrate_button_numbering
 }
 
 # The arcade cores worth offering, best first: FBNeo is the better fit for
@@ -214,6 +217,14 @@ menu_presets() {
 # --------------------------------------------------------------------------
 # Titles
 # --------------------------------------------------------------------------
+
+pad_command() {
+  local sibling="${BASH_SOURCE[0]%/*}/arcade-pad"
+  if [[ -x "$sibling" ]]; then printf '%s\n' "$sibling"
+  elif command -v arcade-pad >/dev/null 2>&1; then command -v arcade-pad
+  fi
+  return 0
+}
 
 rdb_dump_command() {
   local sibling="${BASH_SOURCE[0]%/*}/arcade-rdb-dump"
@@ -823,6 +834,8 @@ Usage:
   $PROGRAM --controls       Print "control<TAB>key<TAB>source" for the cabinet binds
   $PROGRAM --set-control ID=KEY
                             Bind one control, e.g. coin1=num5 (empty = unbind)
+  $PROGRAM --controller     Print the game controller RetroArch will use, its
+                            profile, and which of its buttons does what
   $PROGRAM --controls-preset mame|retroarch
                             Write a whole control layout
   $PROGRAM --help           Show this help
@@ -1058,6 +1071,19 @@ guard_controls_file() {
   [[ "$(cfg_get "$1" config_save_on_exit 2>/dev/null)" == "false" ]] || cfg_write "$1" config_save_on_exit "false"
 }
 
+# Up to 1.2.0 the buttons were numbered for fighting games -- Button 1 on Y --
+# so the MAME layout put Ctrl where most games have their Button 3. A binds
+# file holding exactly that old layout is rewritten to the corrected one.
+migrate_button_numbering() {
+  local file="$CONTROLS_FILE" key want
+  [[ -f "$file" ]] || return 0
+  for want in "y|ctrl" "x|alt" "l|space" "b|shift" "a|z" "r|x"; do
+    key="input_player1_${want%%|*}"
+    [[ "$(cfg_get "$file" "$key" 2>/dev/null)" == "${want#*|}" ]] || return 0
+  done
+  apply_preset mame
+}
+
 # 1.1.0 kept the binds in a full copy of retroarch.cfg and pointed
 # RETROARCH_CONFIG at it, so a shader or driver changed in RetroArch later
 # never reached the arcade. Such a copy is cut down to the binds, the rest kept
@@ -1272,6 +1298,14 @@ main() {
         set_control "${bind%%=*}" "${bind#*=}"
       done
       exit 0
+      ;;
+    --controller)
+      local pad
+      pad="$(pad_command)"
+      [[ -n "$pad" ]] || die 1 "arcade-pad not found"
+      local -a pad_args=(--append "$CONTROLS_FILE" --log "$LOG_FILE")
+      [[ -r "$(base_config)" ]] && pad_args+=(--config "$(base_config)")
+      exec "$pad" "${pad_args[@]}"
       ;;
     --controls-preset)
       shift

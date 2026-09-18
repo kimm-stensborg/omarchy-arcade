@@ -170,6 +170,9 @@ check "and the line that keeps them out of your everyday config" \
 check "RETROARCH_CONFIG is left alone" "$(setting RETROARCH_CONFIG 3)" "default"
 check "the profile matches the layout" "$(control PRESET)" "mame"
 check "coin is 5" "$(control coin1)" "num5"
+check "Button 1 is Ctrl, on the RetroPad B that FBNeo gives Button 1" \
+  "$(grep -c '^input_player1_b = "ctrl"' "$profile")" "1"
+check "Button 3 is Space, on Y" "$(grep -c '^input_player1_y = "space"' "$profile")" "1"
 check "a bind is written once" "$(grep -c '^input_player1_select' "$profile")" "1"
 
 "$launcher" --set-control coin1=num9
@@ -182,6 +185,20 @@ check "to RetroArch's default" "$(control coin1)" "rshift"
 
 "$launcher" --set-control nope=x 2>/dev/null
 check "an unknown control is refused" "$?" "64"
+
+# Up to 1.2.0 Button 1 was Y, so a saved MAME layout had Ctrl on Y.
+printf '%s\n' 'config_save_on_exit = "false"' \
+  'input_player1_y = "ctrl"' 'input_player1_x = "alt"' 'input_player1_l = "space"' \
+  'input_player1_b = "shift"' 'input_player1_a = "z"' 'input_player1_r = "x"' >"$profile"
+"$launcher" --settings >/dev/null
+bound() { grep "^input_player1_$1 = " "$profile" | cut -d'"' -f2; }
+check "an old MAME layout is renumbered" \
+  "$(bound b) $(bound a) $(bound y) $(bound x) $(bound r) $(bound l)" "ctrl alt space shift z x"
+check "and still reads as MAME standard" "$(control PRESET)" "mame"
+printf '%s\n' 'input_player1_y = "ctrl"' >"$profile"
+"$launcher" --settings >/dev/null
+check "a layout of your own is not touched" "$(cat "$profile")" 'input_player1_y = "ctrl"'
+rm -f "$profile"
 
 # 1.1.0 kept the binds in a full copy of retroarch.cfg and pointed
 # RETROARCH_CONFIG at it.
@@ -229,6 +246,35 @@ print(" ".join(sorted(f for f in os.listdir(d) if f.endswith(".miss"))))
 EOF
 )"
 check "only a 404 everywhere is recorded as a miss" "$misses" "absent.miss"
+
+# ----------------------------------------------------------------- the stick
+
+# Profiles are matched the way RetroArch matches them, against a folder of
+# made-up ones, so the answer does not depend on what is plugged in here.
+matched="$(PAD="$here/bin/arcade-pad" DIR="$sandbox/autoconfig" python3 - <<'EOF'
+import importlib.machinery, importlib.util, os
+loader = importlib.machinery.SourceFileLoader("arcade_pad", os.environ["PAD"])
+spec = importlib.util.spec_from_loader("arcade_pad", loader)
+pad = importlib.util.module_from_spec(spec)
+loader.exec_module(pad)
+d = os.environ["DIR"]
+os.makedirs(os.path.join(d, "udev"))
+
+def profile(name, text):
+    with open(os.path.join(d, "udev", name), "w") as fh:
+        fh.write(text)
+
+profile("by-name.cfg", 'input_driver = "udev"\ninput_device = "Nintendo Co., Ltd. Pro Controller"\n')
+profile("by-ids.cfg", 'input_driver = "udev"\ninput_device = "Pro Controller"\n'
+        'input_device_alt1 = "Nintendo Co., Ltd. Pro Controller"\n'
+        'input_vendor_id = "1406"\ninput_product_id = "8201"\n')
+profile("off.cfg", '#input_device = "Nintendo Co., Ltd. Pro Controller"\n')
+stick = {"name": "Nintendo Co., Ltd. Pro Controller", "vendor": 0x057E, "product": 0x2009}
+other = {"name": "Mystery Pad", "vendor": 1, "product": 2}
+print(os.path.basename(pad.autoconfig(stick, [d])[0]), pad.autoconfig(other, [d]))
+EOF
+)"
+check "the profile matching name and ids wins, as in RetroArch" "$matched" "by-ids.cfg None"
 
 # ----------------------------------------------------------------- launching
 

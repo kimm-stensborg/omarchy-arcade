@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+"""Report the game controller RetroArch will use for player 1, and watch it.
+
+    arcade-pad [--config retroarch.cfg] [--append binds.cfg] [--log arcade.log]
+    PAD<TAB>name<TAB>vendor:product<TAB>/dev/input/eventN<TAB>dpad
+    PROFILE<TAB>/path/to/autoconfig.cfg<TAB>display name
+    BIND<TAB>retropad button<TAB>joypad spec<TAB>label
+    SEEN<TAB>port<TAB>name          (what RetroArch said at the last launch)
+
+    arcade-pad --watch /dev/input/eventN
+    button<TAB>3<TAB>1              (RetroArch's number for it, pressed/released)
+    hat<TAB>up<TAB>1
+    axis<TAB>+0<TAB>1               (past half way, and back)
+
+Everything is numbered the way RetroArch's udev joypad driver numbers it, so a
+press read here is looked up in the same autoconfig profile RetroArch uses and
+means the same thing it will mean in a game. Nothing here needs root: the
+logged-in user can read their own input devices.
+"""
+
+import argparse
+import array
+import fcntl
+import glob
+import os
+import re
+import struct
+import sys
+
+EV_KEY, EV_ABS = 0x01, 0x03
+BTN_MISC, BTN_JOYSTICK, KEY_MAX = 0x100, 0x120, 0x2FF
+ABS_HAT0X, ABS_HAT3Y, ABS_MISC, ABS_MAX = 0x10, 0x17, 0x28, 0x3F
+
+RETROPAD = ("b", "y", "select", "start", "up", "down", "left", "right", "a", "x", "l", "r", "l2", "r2", "l3", "r3")
+
+AUTOCONFIG_DIRS = ("/usr/share/libretro/autoconfig", os.path.expanduser("~/.config/retroarch/autoconfig"))
+
+
+def ioc_read(nr, size):
+    # _IOC(_IOC_READ, 'E', nr, size)
+    return (2 << 30) | (size << 16) | (ord("E") << 8) | nr
+
+
+def bits(fd, ev, count):
+    buf = array.array("B", [0] * ((count + 7) // 8))
+    try:
+        fcntl.ioctl(fd, ioc_read(0x20 + ev, len(buf)), buf, True)
+    except OSError:
+        return set()
+    return {i for i in range(count) if buf[i // 8] & (1 << (i % 8))}
+
+
+def absinfo(fd, code):
+    buf = array.array("i", [0] * 6)
+    try:
+        fcntl.ioctl(fd, ioc_read(0x40 + code, 24), buf, True)
+    except OSError:
+        return None
+    return buf[1], buf[2]  # minimum, maximum
+
+
+class Layout:
+    """RetroArch's numbering of one device's buttons, hats and axes.
+
+    udev_joypad.c counts buttons from BTN_JOYSTICK up to KEY_MAX, then from
+    BTN_MISC up to BTN_JOYSTICK, and axes in code order skipping the hats.
+    """
+
+    def __init__(self, path):
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            keys = bits(fd, EV_KEY, KEY_MAX + 1)
+            absolute = bits(fd, EV_ABS, ABS_MAX + 1)
+            self.buttons = {}
+            for code in list(range(BTN_JOYSTICK, KEY_MAX)) + list(range(BTN_MISC, BTN_JOYSTICK)):
+                if code in keys:
+                    self.buttons[code] = len(self.buttons)
+            self.axes = {}
+            self.ranges = {}
+            self.hats = set()
+            for code in range(ABS_MISC):
+                if code not in absolute:
+                    continue
+                if ABS_HAT0X <= code <= ABS_HAT3Y:
+                    self.hats.add(code)
+                    continue
+                self.axes[code] = len(self.axes)
+                self.ranges[code] = absinfo(fd, code) or (-32768, 32767)
+        finally:
+            os.close(fd)
+
+
+def pads():
+    """Game controllers, in the order the kernel lists them."""
+    found = []
+    try:
+        text = open("/proc/bus/input/devices", encoding="utf-8", errors="replace").read()
+    except OSError:
+        return found
+    for block in text.split("\n\n"):
+        handlers = re.search(r"^H: Handlers=(.*)$", block, re.M)
+        if not handlers or not re.search(r"\bjs\d+\b", handlers.group(1)):
+            continue
+        event = re.search(r"\b(event\d+)\b", handlers.group(1))
+        name = re.search(r'^N: Name="(.*)"$', block, re.M)
+        ids = re.search(r"^I: .*Vendor=([0-9a-f]+) Product=([0-9a-f]+)", block, re.M)
+        if not event:
+            continue
+        found.append({
+            "name": name.group(1) if name else "",
+            "vendor": int(ids.group(1), 16) if ids else 0,
+            "product": int(ids.group(2), 16) if ids else 0,
+            "event": "/dev/input/" + event.group(1),
+        })
+    return found
+
+
+def read_cfg(path):
+    values = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                m = re.match(r'^\s*([A-Za-z0-9_]+)\s*=\s*"?(.*?)"?\s*$', line)
+                if m:
+                    values.setdefault(m.group(1), m.group(2))
+    except OSError:
+        pass
+    return values
+
+
+def autoconfig(pad, dirs):
+    """The profile RetroArch's autoconfiguration would pick: a vendor and
+    product match counts for more than a name match, and both beat either."""
+    best, best_score = None, 0
+    for directory in dirs:
+        for path in sorted(glob.glob(os.path.join(directory, "udev", "*.cfg"))):
+            cfg = read_cfg(path)
+            if cfg.get("input_driver", "udev") != "udev":
+                continue
+            names = [v for k, v in cfg.items() if re.match(r"input_device(_alt\d+)?$", k)]
+            score = 0
+            try:
+                if int(cfg.get("input_vendor_id", "-1")) == pad["vendor"] and \
+                        int(cfg.get("input_product_id", "-1")) == pad["product"]:
+                    score += 3
+            except ValueError:
+                pass
+            if pad["name"] and pad["name"] in names:
+                score += 2
+            if score > best_score:
+                best, best_score = (path, cfg), score
+    return best
+
+
+def last_seen(log):
+    """What RetroArch said about controllers at the most recent launch."""
+    try:
+        with open(log, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    launches = [m.start() for m in re.finditer(r"^=== .* launching .* ===$", text, re.M)]
+    if not launches:
+        return None
+    chunk = text[launches[-1]:]
+    return re.findall(r"\[Autoconf\] (.*) configured in port (\d+)", chunk)
+
+
+def report(args):
+    config = read_cfg(args.config) if args.config else {}
+    appended = read_cfg(args.append) if args.append else {}
+    merged = dict(config)
+    merged.update(appended)
+
+    dirs = [merged.get("joypad_autoconfig_dir", "")] if merged.get("joypad_autoconfig_dir") else []
+    dirs += [d for d in AUTOCONFIG_DIRS if d not in dirs]
+
+    found = pads()
+    index = 0
+    try:
+        index = int(merged.get("input_player1_joypad_index", "0"))
+    except ValueError:
+        pass
+
+    if 0 <= index < len(found):
+        pad = found[index]
+        try:
+            layout = Layout(pad["event"])
+            dpad = "hat" if layout.hats else "none"
+        except OSError:
+            dpad = "unreadable"
+        print("PAD\t%s\t%04x:%04x\t%s\t%s" % (pad["name"], pad["vendor"], pad["product"], pad["event"], dpad))
+
+        match = autoconfig(pad, dirs)
+        binds = {}
+        labels = {}
+        if match:
+            path, cfg = match
+            print("PROFILE\t%s\t%s" % (path, cfg.get("input_device_display_name") or cfg.get("input_device", "")))
+            for button in RETROPAD:
+                for kind in ("btn", "axis"):
+                    value = cfg.get("input_%s_%s" % (button, kind))
+                    if value and value != "nul" and button not in binds:
+                        binds[button] = value
+                        labels[button] = cfg.get("input_%s_%s_label" % (button, kind), "")
+        # A player 1 bind in the config wins over the profile, as in RetroArch.
+        for button in RETROPAD:
+            for kind in ("btn", "axis"):
+                value = merged.get("input_player1_%s_%s" % (button, kind))
+                if value and value != "nul":
+                    binds[button] = value
+                    labels[button] = ""
+        for button in RETROPAD:
+            if button in binds:
+                print("BIND\t%s\t%s\t%s" % (button, binds[button], labels.get(button, "")))
+        # The one hotkey a profile carries: the Home button opens RetroArch's menu.
+        menu = (match[1].get("input_menu_toggle_btn") if match else None) or merged.get("input_menu_toggle_btn")
+        if menu and menu != "nul":
+            label = match[1].get("input_menu_toggle_btn_label", "") if match else ""
+            print("BIND\tmenu_toggle\t%s\t%s" % (menu, label))
+
+    for name, port in (last_seen(args.log) or []) if args.log else []:
+        print("SEEN\t%s\t%s" % (port, name))
+    return 0
+
+
+def watch(path):
+    layout = Layout(path)
+    fmt = "llHHi"
+    size = struct.calcsize(fmt)
+    held = {}
+    with open(path, "rb", buffering=0) as fh:
+        while True:
+            data = fh.read(size)
+            if len(data) < size:
+                return 0
+            _, _, ev, code, value = struct.unpack(fmt, data)
+            if ev == EV_KEY and code in layout.buttons:
+                print("button\t%d\t%d" % (layout.buttons[code], 1 if value else 0), flush=True)
+            elif ev == EV_ABS and code in layout.hats:
+                # Hat 0 only: that is what h0up and friends name.
+                axis = (code - ABS_HAT0X) % 2
+                if code - ABS_HAT0X >= 2:
+                    continue
+                neg, pos = ("left", "right") if axis == 0 else ("up", "down")
+                for direction, on in ((neg, value < 0), (pos, value > 0)):
+                    if held.get(direction, False) != on:
+                        held[direction] = on
+                        print("hat\t%s\t%d" % (direction, 1 if on else 0), flush=True)
+            elif ev == EV_ABS and code in layout.axes:
+                low, high = layout.ranges[code]
+                middle = (low + high) / 2.0
+                span = (high - low) / 2.0 or 1
+                position = (value - middle) / span
+                n = layout.axes[code]
+                for sign, on in (("-", position < -0.5), ("+", position > 0.5)):
+                    key = "%s%d" % (sign, n)
+                    if held.get(key, False) != on:
+                        held[key] = on
+                        print("axis\t%s\t%d" % (key, 1 if on else 0), flush=True)
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="arcade-pad", description=__doc__.split("\n")[0])
+    parser.add_argument("--config", help="the RetroArch config the arcade runs with")
+    parser.add_argument("--append", help="the arcade binds file layered over it")
+    parser.add_argument("--log", help="arcade.log, for what RetroArch said at the last launch")
+    parser.add_argument("--watch", metavar="DEVICE", help="stream presses from this event device")
+    args = parser.parse_args(argv[1:])
+    try:
+        if args.watch:
+            return watch(args.watch)
+        return report(args)
+    except KeyboardInterrupt:
+        return 0
+    except OSError as err:
+        print("arcade-pad: %s" % err, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
