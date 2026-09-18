@@ -254,6 +254,57 @@ function wallHints(stick, versions) {
   return keys
 }
 
+// ------------------------------------------------------------ adding games
+
+// What `arcade-launcher --add` said, one "result<TAB>name<TAB>detail" line per
+// dropped file, summed up for the info bar: a headline, the first reason
+// something was turned away, and which games came in so the wall can go to
+// the first of them.
+function addSummary(text) {
+  var counts = { added: 0, bios: 0, exists: 0, rejected: 0, conflict: 0, skipped: 0 }
+  var first = {}
+  var added = []
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var parts = lines[i].split("\t")
+    if (parts.length < 2 || counts[parts[0]] === undefined) continue
+    var entry = { name: parts[1], detail: parts[2] || "" }
+    counts[parts[0]]++
+    if (!first[parts[0]]) first[parts[0]] = entry
+    if (parts[0] === "added") added.push(romName(parts[1]))
+  }
+
+  var pieces = []
+  if (counts.added === 1) pieces.push("Added " + (first.added.detail || first.added.name))
+  else if (counts.added > 1) pieces.push("Added " + counts.added + " games")
+  if (counts.bios === 1) pieces.push("BIOS " + first.bios.name + " added")
+  else if (counts.bios > 1) pieces.push(counts.bios + " BIOS sets added")
+  if (counts.exists === 1) pieces.push((first.exists.detail || first.exists.name) + " is already in your collection")
+  else if (counts.exists > 1) pieces.push(counts.exists + " already in your collection")
+  var turned = counts.rejected + counts.conflict + counts.skipped
+  if (turned > 0) pieces.push(turned === 1 && pieces.length === 0 ? "Not added" : turned + " not added")
+
+  var why = first.rejected || first.conflict || first.skipped
+  return {
+    title: pieces.join("  ·  ") || "Nothing to add",
+    detail: why ? why.name + ": " + why.detail : "",
+    added: added,
+    ok: turned === 0
+  }
+}
+
+// Dropped URLs as local paths; anything not a local file is left out.
+function droppedPaths(urls) {
+  var out = []
+  var list = urls || []
+  for (var i = 0; i < list.length; i++) {
+    var url = String(list[i])
+    if (url.indexOf("file://") !== 0) continue
+    out.push(decodeURIComponent(url.substring("file://".length)))
+  }
+  return out
+}
+
 // "2 hours ago", for the line under a tile. Coarse on purpose: when you last
 // played Galaga is a feeling, not a timestamp.
 function playedAgo(epoch, now) {

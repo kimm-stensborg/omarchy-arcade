@@ -43,6 +43,18 @@ printf '#!/bin/sh\n[ "$1" = -- ] && shift\nexec "$@"\n' >"$sandbox/bin/uwsm-app"
 # crash.zip takes RetroArch down with it.
 cat >"$sandbox/bin/fakearch" <<'FAKE'
 #!/bin/bash
+# A test load (--max-frames) runs a couple of frames and quits, as RetroArch
+# does -- "Unloading game" included, which is not a failure there.
+if [[ " $* " == *" --max-frames="* ]]; then
+  case "${*: -1}" in
+    *bad.zip) echo "[libretro ERROR] [FBNeo] ROM at index 0 with name 201-p1.p1 and CRC 0x1 is required"
+              echo "[INFO] [Core] Geometry: 640x480, Aspect: 1.333, FPS: 60.00" ;;
+    *crash.zip) exit 1 ;;
+    *) echo "[INFO] [Core] Geometry: 256x224, Aspect: 1.333, FPS: 60.00" ;;
+  esac
+  echo "[INFO] [Core] Unloading game..."
+  exit 0
+fi
 sleep 30 & nap=$!
 trap 'echo "[INFO] [Core] Unloading game..."; kill $nap; exit 0' TERM
 case "${*: -1}" in
@@ -375,6 +387,34 @@ check "with a reason on the desktop" "$(grep -c "RetroArch is already running" "
 check "--stop leaves it alone too, and says why" "$?" "72"
 check "still running" "$(kill -0 "$mine" 2>/dev/null && echo alive)" "alive"
 kill "$mine" 2>/dev/null
+
+# ------------------------------------------------------------ adding games
+
+drop="$sandbox/Downloads"
+mkdir -p "$drop"
+printf 'fresh' >"$drop/freshgood.zip"
+printf 'broken' >"$drop/freshbad.zip"
+printf 'crashes' >"$drop/freshcrash.zip"
+printf 'bios' >"$drop/qsound.zip"
+printf 'hello' >"$drop/notes.txt"
+before="$(ls "$HOME/Games/roms" | wc -l)"
+added="$("$launcher" --add "$drop/freshgood.zip" "$drop/freshbad.zip" "$drop/freshcrash.zip" \
+  "$drop/qsound.zip" "$drop/notes.txt" | cut -f1,2 | tr '\t\n' ' |')"
+check "each dropped file gets a verdict" "$added" \
+  "added freshgood.zip|rejected freshbad.zip|rejected freshcrash.zip|bios qsound.zip|skipped notes.txt|"
+check "a game that runs is in the collection" "$(cat "$HOME/Games/roms/freshgood.zip")" "fresh"
+check "one that does not is taken out again" \
+  "$([[ -e "$HOME/Games/roms/freshbad.zip" || -e "$HOME/Games/roms/freshcrash.zip" ]] && echo left || echo gone)" "gone"
+check "saying why" "$("$launcher" --add "$drop/freshbad.zip" | cut -f3)" \
+  "1 file is missing from the romset (201-p1.p1) -- it may be for another version, or need its BIOS."
+check "a BIOS goes in without being played" "$(cat "$HOME/Games/roms/qsound.zip")" "bios"
+check "the original is left where it was" "$(cat "$drop/freshgood.zip")" "fresh"
+check "nothing else went in" "$(ls "$HOME/Games/roms" | wc -l)" "$((before + 2))"
+check "the same file again is already there" "$("$launcher" --add "$drop/freshgood.zip" | cut -f1)" "exists"
+printf 'other' >"$drop/other.zip"
+check "a different file of the same name is never replaced" \
+  "$("$launcher" --add "$drop/other.zip" | cut -f1)$(cat "$HOME/Games/roms/other.zip" 2>/dev/null)" "conflict"
+check "and no test load is left running" "$(games_running)" "0"
 
 printf '\n'
 if ((failed)); then

@@ -542,12 +542,15 @@ trim_log() {
   tail -c 1048576 -- "$LOG_FILE" >"$tmp" && mv -f "$tmp" "$LOG_FILE" || rm -f "$tmp"
 }
 
+# Read to the end rather than stopping at the first match: an awk that quits
+# early kills title_sources mid-write, and under pipefail that failure would
+# take the whole launcher down with it.
 rom_title() {
   local rom="${1##*/}"
   rom="${rom%.*}"
   title_sources | awk -F'\t' -v rom="$rom" '
-    $1 == rom && NF >= 2 { print $2; found = 1; exit }
-    END { if (!found) print rom }'
+    !found && $1 == rom && NF >= 2 { title = $2; found = 1 }
+    END { print (found ? title : rom) }'
 }
 
 # Whether the game actually started. A romset that is incomplete, the wrong
@@ -563,7 +566,7 @@ watch_launch() {
     # what follows in the log is that game's, not this one's.
     [[ "$(cut -f1 "$RUNNING_FILE" 2>/dev/null)" == "$pid" ]] || return 0
     # This launch's part of the log only, up to the next launch's header.
-    chunk="$(tail -c +"$((offset + 1))" -- "$LOG_FILE" 2>/dev/null | awk '/^=== .* launching .* ===$/ { exit } { print }')"
+    chunk="$(tail -c +"$((offset + 1))" -- "$LOG_FILE" 2>/dev/null | awk '/^=== .* launching .* ===$/ { done = 1 } !done { print }')"
     # Failure is looked for before success, because it can look like success:
     # FBNeo lists the files it lacks and then boots a screen of its own saying
     # so, which reports a picture like any game.
@@ -595,6 +598,124 @@ Details: ${LOG_FILE/#$HOME\//\~/}"
 # The one sentence worth reading out of a failed load. FBNeo lists every file
 # the romset lacks, which is the common case: a set from another version, or a
 # game whose BIOS is not next to it.
+# --------------------------------------------------------------------------
+# Adding games
+#
+# A romset dropped on the panel (or passed to --add) is copied into ROM_DIR and
+# then actually loaded: RetroArch runs the core for a couple of frames with no
+# window and no sound, and the same log lines that tell a failed launch apart
+# say whether it runs. Only the ones that do are kept. It is tested from inside
+# ROM_DIR because that is where the BIOS a game needs is looked for.
+# --------------------------------------------------------------------------
+
+sibling_command() {
+  local sibling="${BASH_SOURCE[0]%/*}/$1"
+  if [[ -x "$sibling" ]]; then printf '%s\n' "$sibling"
+  elif command -v "$1" >/dev/null 2>&1; then command -v "$1"
+  fi
+  return 0
+}
+
+# Loads a romset headless and prints why it will not run, or nothing if it will.
+probe_rom() {
+  local rom="$1" cfg log reason=""
+  cfg="$(mktemp --suffix=.cfg)" log="$(mktemp)"
+  # A test is not a game played: no window, no sound, nothing in RetroArch's
+  # history or play time, and its config left exactly as it was.
+  printf '%s\n' 'video_driver = "null"' 'audio_driver = "null"' 'config_save_on_exit = "false"' \
+    'history_list_enable = "false"' 'content_runtime_log = "false"' \
+    'content_runtime_log_aggregate = "false"' >"$cfg"
+  local -a cmd=("$RETROARCH_BIN" --verbose --max-frames=2 -L "$CORE_PATH")
+  [[ -n "$RETROARCH_CONFIG" ]] && cmd+=(--config "$RETROARCH_CONFIG")
+  cmd+=(--appendconfig "$cfg" "$rom")
+  timeout 30 "${cmd[@]}" >"$log" 2>&1 </dev/null || true
+
+  local chunk
+  chunk="$(cat -- "$log")"
+  # Missing files first: FBNeo still reports a picture for its own "files
+  # are missing" screen. "Unloading game" is not a failure here -- every test
+  # run ends with it after its two frames.
+  if grep -qE 'is required$|Failed to load content' <<<"$chunk"; then
+    reason="$(launch_failure "$chunk")"
+    reason="${reason:-RetroArch could not load it.}"
+  elif ! grep -q '\[Core\] Geometry:' <<<"$chunk"; then
+    reason="$(launch_failure "$chunk")"
+    reason="${reason:-RetroArch could not load it with this core.}"
+  fi
+  rm -f -- "$cfg" "$log"
+  printf '%s' "$reason"
+}
+
+# Is this romset a BIOS or device set rather than a game?
+is_bios_set() {
+  local rom="$1" title set
+  for set in "${BIOS_SETS[@]}"; do [[ "$set" == "$rom" ]] && return 0; done
+  title="$(title_sources | awk -F'\t' -v rom="$rom" '!found && $1 == rom && NF >= 2 { title = tolower($2); found = 1 } END { print title }')"
+  [[ "$title" =~ bios\)?$ || "$title" =~ internal\ p?rom$ ]]
+}
+
+# One "result<TAB>name<TAB>detail" line per file:
+#   added      a game, copied in and tested       detail: its title
+#   bios       a BIOS or device set, copied in    detail: its title
+#   exists     already in ROM_DIR, identical      detail: its title
+#   conflict   a different file of that name is there; nothing replaced
+#   rejected   copied in, would not run, taken out again   detail: why
+#   skipped    not a romset at all                detail: why
+cmd_add() {
+  local file name rom dest ext title reason ok_ext added=()
+  mkdir -p -- "$ROM_DIR" || die "$EX_NO_ROM_DIR" "cannot create $ROM_DIR"
+  for file in "$@"; do
+    name="${file##*/}"
+    rom="${name%.*}"
+    ext="${name##*.}"
+    ok_ext=0
+    for want in $ROM_EXTS; do [[ "${ext,,}" == "${want,,}" ]] && ok_ext=1; done
+    if [[ ! -f "$file" ]]; then
+      printf 'skipped\t%s\t%s\n' "$name" "not a file"
+      continue
+    fi
+    if ((!ok_ext)); then
+      printf 'skipped\t%s\t%s\n' "$name" "not a romset (${ROM_EXTS// /, })"
+      continue
+    fi
+
+    dest="$ROM_DIR/$name"
+    title="$(rom_title "$rom")"
+    if [[ -e "$dest" ]]; then
+      if cmp -s -- "$file" "$dest"; then
+        printf 'exists\t%s\t%s\n' "$name" "$title"
+      else
+        printf 'conflict\t%s\t%s\n' "$name" "a different $name is already in your collection"
+      fi
+      continue
+    fi
+
+    cp -- "$file" "$dest" || { printf 'rejected\t%s\t%s\n' "$name" "could not copy it into $ROM_DIR"; continue; }
+
+    if is_bios_set "$rom"; then
+      printf 'bios\t%s\t%s\n' "$name" "$title"
+      continue
+    fi
+
+    reason="$(probe_rom "$dest")"
+    if [[ -n "$reason" ]]; then
+      rm -f -- "$dest"
+      printf 'rejected\t%s\t%s\n' "$name" "$reason"
+      continue
+    fi
+    printf 'added\t%s\t%s\n' "$name" "$title"
+    added+=("$rom")
+  done
+
+  # Artwork for what came in, so the tile is dressed the moment it appears.
+  local artwork
+  artwork="$(sibling_command arcade-artwork)"
+  if ((${#added[@]})) && [[ -n "$artwork" ]]; then
+    "$artwork" "${added[@]}" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 launch_failure() {
   local chunk="$1" missing names
   missing="$(grep -c 'is required' <<<"$chunk" || true)"
@@ -836,6 +957,8 @@ Usage:
   $PROGRAM --controls       Print "control<TAB>key<TAB>source" for the cabinet binds
   $PROGRAM --set-control ID=KEY
                             Bind one control, e.g. coin1=num5 (empty = unbind)
+  $PROGRAM --add FILE...    Copy romsets into ROM_DIR, test that each runs, keep
+                            the ones that do, fetch their artwork
   $PROGRAM --stop           Close the game this launcher started (1: none running,
                             72: a RetroArch started some other way is left alone)
   $PROGRAM --controller     Print the game controller RetroArch will use, its
@@ -1250,7 +1373,7 @@ cmd_menu() {
   choice="$(printf '%s\n' "$lines" | cut -f1 | eval "$MENU_CMD" || true)"
   [[ -n "$choice" ]] || exit 0
 
-  rom="$(printf '%s\n' "$lines" | awk -F'\t' -v want="$choice" '$1 == want { print $2; exit }')"
+  rom="$(printf '%s\n' "$lines" | awk -F'\t' -v want="$choice" '!found && $1 == want { print $2; found = 1 }')"
   [[ -n "$rom" ]] || die "$EX_UNKNOWN_ROM" "no ROM matches the selection: $choice"
 
   launch_rom "$rom"
@@ -1303,6 +1426,20 @@ main() {
         [[ "$bind" == *=* ]] || die "$EX_USAGE" "not an ID=KEY pair: $bind"
         set_control "${bind%%=*}" "${bind#*=}"
       done
+      exit 0
+      ;;
+    --add)
+      shift
+      (($#)) || die "$EX_USAGE" "--add needs one or more romsets"
+      diagnose || true
+      drop_problem "$EX_NO_MENU"
+      drop_problem "$EX_NO_ROMS"
+      drop_problem "$EX_NO_ROM_DIR"
+      if ((${#problems[@]})); then
+        report_text >&2
+        exit "$(first_problem_code)"
+      fi
+      cmd_add "$@"
       exit 0
       ;;
     --stop)

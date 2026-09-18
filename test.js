@@ -129,6 +129,26 @@ check("keyboard hints", M.wallHints(false, false).map((h) => h.keys.join("+") + 
 check("stick hints, with versions", M.wallHints(true, true).map((h) => h.keys.join("+") + " " + h.label),
       ["B Play", "Y+X Version", "− Settings", "Home Close"])
 
+// ------------------------------------------------------------ adding games
+
+const one = M.addSummary("added\tpang.zip\tPang\n")
+check("one game added says which", one.title, "Added Pang")
+check("and where to go", one.added, ["pang"])
+check("with nothing wrong", [one.ok, one.detail], [true, ""])
+const mixed = M.addSummary([
+  "added\tpang.zip\tPang", "added\tgalaga.zip\tGalaga",
+  "rejected\tmslug.zip\t13 files are missing from the romset",
+  "skipped\tnotes.txt\tnot a romset (zip, 7z, chd)",
+].join("\n"))
+check("several are counted", mixed.title, "Added 2 games  ·  2 not added")
+check("and the first reason is given", mixed.detail, "mslug.zip: 13 files are missing from the romset")
+check("a lone rejection says so plainly", M.addSummary("rejected\tx.zip\tbroken").title, "Not added")
+check("a file already there", M.addSummary("exists\tbublbobl.zip\tBubble Bobble").title,
+      "Bubble Bobble is already in your collection")
+check("a BIOS", M.addSummary("bios\tneogeo.zip\tNeo Geo").title, "BIOS neogeo.zip added")
+check("dropped files become paths", M.droppedPaths(["file:///home/k/Down%20loads/pang.zip", "https://x/y.zip"]),
+      ["/home/k/Down loads/pang.zip"])
+
 // ----------------------------------------------------------------- versions
 
 const SETS = M.parseList([

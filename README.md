@@ -148,6 +148,35 @@ A launch that failed is not counted as a game played. The launcher waits up to
 twenty seconds for an answer: a large CHD can take that long to load, and a
 guess would close a game that was about to start.
 
+## Adding games
+
+Drag romsets out of a file manager and drop them anywhere on the panel. The
+panel covers the screen, so start the drag first, then open it with
+`Super+A` (or Home on the stick) while still holding the files, and let go.
+
+Each file is copied into `ROM_DIR` and then **test-loaded**: RetroArch runs the
+core for two frames with no window and no sound, and the same log lines that
+catch a failed launch decide whether it runs. It happens inside `ROM_DIR`,
+because that is where a game's BIOS is looked for. Only what runs stays:
+
+| Verdict | What happens |
+|---------|--------------|
+| added | a game that runs; it is kept, its artwork fetched, and the wall goes to it |
+| BIOS | a BIOS or device set (`neogeo.zip`, `qsound.zip`); kept without a test, since it is not a game |
+| already there | the same file is already in `ROM_DIR` |
+| not added | it would not run (for example, "13 files are missing from the romset"), so it is taken out again. A different file with the same name already in `ROM_DIR` is never replaced. A file that is not a `.zip`, `.7z` or `.chd` is skipped |
+
+The info bar sums up the drop ("Added Pang", "Added 2 games · 1 not added") and
+gives the first reason anything was turned away. The original files are left
+where they were. A test load adds nothing to RetroArch's history, play time or
+config.
+
+The same from a terminal, one `result<TAB>file<TAB>detail` line per file:
+
+```bash
+arcade-launcher --add ~/Downloads/*.zip
+```
+
 ## With the stick
 
 A game controller works the panel too, and **Home opens it**. Nothing needs
@@ -458,6 +487,7 @@ arcade-launcher --doctor         # check the setup
 arcade-launcher --rebuild-titles # refresh the cache
 arcade-launcher --settings       # every setting, its value and where it came from
 arcade-launcher --set ARTWORK=off  # write a setting to arcade.conf
+arcade-launcher --add pang.zip   # copy in, test-load, keep if it runs
 ```
 
 RetroArch is detached with `setsid` (through `uwsm-app` when present) and its

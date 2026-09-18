@@ -47,6 +47,14 @@ Item {
   property string problemReport: ""
   property string statusMessage: ""
 
+  // ---- adding games by dropping them on the panel
+  property bool dropHover: false
+  // The line under the status after a drop: why something was turned away.
+  property string addNote: ""
+  property bool addOk: true
+  // The first game a drop added, to be selected once the list has it.
+  property string pendingSelectRom: ""
+
   // ---- settings
   // Everything the panel can be told is a key in arcade.conf, read back from
   // the launcher rather than kept here: the file a person edits by hand and
@@ -193,6 +201,7 @@ Item {
     root.filterText = payload.filter ? String(payload.filter) : ""
     root.selectedIndex = 0
     root.statusMessage = ""
+    root.addNote = ""
     root.closeSettings()
     root.loadSettings()
     root.refresh()
@@ -571,6 +580,7 @@ Item {
   function move(action) {
     if (root.rows.length === 0) return
     pointerGate.reset()
+    if (!addProc.running) { root.statusMessage = ""; root.addNote = "" }
     root.setSelected(Model.wallMove(root.selectedIndex, action, root.columns, root.shelfCount, root.rows.length))
   }
 
@@ -583,7 +593,23 @@ Item {
     })
   }
 
+  // Romsets dropped on the panel: copied into the ROM directory, each one
+  // test-loaded headless, kept only if it runs, artwork fetched. The launcher
+  // does all of it; the panel says what happened and goes to the new game.
+  function addGames(paths) {
+    if (paths.length === 0) return
+    if (addProc.running) { root.statusMessage = "Still checking the last drop…"; return }
+    if (root.settingsOpen) root.closeSettings()
+    root.addNote = ""
+    root.statusMessage = paths.length === 1
+      ? "Checking " + paths[0].replace(/^.*\//, "") + "…"
+      : "Checking " + paths.length + " files…"
+    addProc.command = [root.launcher, "--add"].concat(paths)
+    addProc.running = true
+  }
+
   function setFilter(next) {
+    root.addNote = ""
     root.filterText = next
     // Any edit re-aims at the best match rather than keeping a tile that the
     // new filter may have pushed somewhere else entirely.
@@ -621,6 +647,15 @@ Item {
         root.games = Model.parseList(text)
         root.loaded = true
         root.selectedIndex = 0
+        if (root.pendingSelectRom) {
+          var rom = root.pendingSelectRom
+          root.pendingSelectRom = ""
+          Qt.callLater(function() {
+            for (var i = 0; i < root.rows.length; i++) {
+              if (root.rows[i].rom === rom) { root.setSelected(i); break }
+            }
+          })
+        }
       }
     }
     // --list reports problems on stderr: the same text `arcade-launcher
@@ -671,6 +706,31 @@ Item {
       waitForEnd: true
       onStreamFinished: root.settingsParsed = Model.parseSettings(text)
     }
+  }
+
+  Process {
+    id: addProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var summary = Model.addSummary(text)
+        root.statusMessage = summary.title
+        root.addNote = summary.detail
+        root.addOk = summary.ok
+        if (summary.added.length > 0) {
+          root.filterText = ""
+          root.pendingSelectRom = summary.added[0]
+        }
+      }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: if (text && text.trim().length > 0) {
+        root.addNote = text.trim().split("\n")[0]
+        root.addOk = false
+      }
+    }
+    onExited: root.refresh()
   }
 
   Process {
@@ -1428,7 +1488,7 @@ Item {
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 textFormat: Text.PlainText
-                text: root.games.length === 0 ? "Put romsets in your ROM directory, then press F5"
+                text: root.games.length === 0 ? "Drop romsets here, or put them in your ROM directory and press F5"
                                               : "Backspace to widen the search"
                 color: root.foreground
                 opacity: 0.4
@@ -1777,9 +1837,9 @@ Item {
               Text {
                 width: parent.width
                 textFormat: Text.PlainText
-                text: root.launchNote || Model.gameFacts(root.selected, root.now)
-                color: root.launchNote ? root.accent : root.foreground
-                opacity: root.launchNote ? 1 : 0.55
+                text: root.addNote || root.launchNote || Model.gameFacts(root.selected, root.now)
+                color: (root.addNote && !root.addOk) || root.launchNote ? root.accent : root.foreground
+                opacity: (root.addNote && !root.addOk) || root.launchNote ? 1 : 0.55
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideRight
@@ -1930,6 +1990,74 @@ Item {
         }
       }
     }
+
+    // Files held over the panel: the card says what letting go will do.
+    Rectangle {
+      anchors.fill: card
+      radius: card.radius
+      visible: root.dropHover
+      color: Util.alpha(root.background, 0.92)
+      border.width: Math.max(2, Style.space(3))
+      border.color: root.accent
+
+      Column {
+        anchors.centerIn: parent
+        spacing: Style.space(10)
+
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: "󰇚"
+          color: root.accent
+          font.family: root.fontFamily
+          font.pixelSize: Math.round(Style.font.title * 3)
+        }
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: "Drop romsets to add them"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Math.round(Style.font.title * 1.5)
+          font.bold: true
+        }
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          textFormat: Text.PlainText
+          text: "Each one is test-loaded first; only games that run go in, with their artwork."
+          color: root.foreground
+          opacity: 0.55
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+      }
+    }
+
+    DropArea {
+      anchors.fill: parent
+      onEntered: function(drag) {
+        if (!drag.hasUrls) return
+        drag.accept(Qt.CopyAction)
+        root.dropHover = true
+      }
+      onExited: root.dropHover = false
+      onDropped: function(drop) {
+        root.dropHover = false
+        if (!drop.hasUrls) return
+        drop.accept(Qt.CopyAction)
+        root.addGames(Model.droppedPaths(drop.urls))
+      }
+    }
+  }
+
+  // ------------------------------------------------------------- dropping
+  //
+  // The whole screen is the drop target while the panel is up: drag romsets
+  // out of a file manager, open the panel (Super+A, or Home on the stick) with
+  // the drag still held, and let go anywhere.
+  Connections {
+    target: panel
+    function onVisibleChanged() { if (!panel.visible) root.dropHover = false }
   }
 
   // Long enough that a run of arrow presses is one write, short enough that
