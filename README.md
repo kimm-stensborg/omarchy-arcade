@@ -233,6 +233,16 @@ arcade-launcher --game-set sf2 SHADER=                # back to RetroArch's
 arcade-launcher --game-image bublbobl ~/Pictures/bb.png
 ```
 
+### RetroArch's desktop menu is left off
+
+Every arcade game is started with `desktop_menu_enable = "false"` layered on
+top of your RetroArch config (in `$XDG_RUNTIME_DIR/omarchy-arcade-base.cfg`,
+written at each launch). With the desktop menu on, RetroArch 1.22 builds its
+Qt companion window at start-up, hidden, and building it now and then
+crashes: a page of its Options dialog reads a setting through a bad pointer.
+The arcade never shows that window, so it is not built. Your everyday
+RetroArch keeps its desktop menu as you set it; nothing is saved back.
+
 ## Adding games
 
 Two ways in, and both take as many files as you like at once:

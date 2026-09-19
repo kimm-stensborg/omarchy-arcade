@@ -444,6 +444,24 @@ ensure_game_file() {
   printf '%s\n' "$file"
 }
 
+# RetroArch's desktop menu (the Qt companion window) is built at start-up,
+# hidden, whenever desktop_menu_enable is on, and building it crashes now and
+# then: a settings page in its Options dialog reads through a bad pointer
+# (RetroArch 1.22, seen on the Input and Achievements pages). The arcade never
+# shows that window, so it is not built. config_save_on_exit keeps this out of
+# your everyday retroarch.cfg, where the desktop menu stays as you set it.
+arcade_base_lines() {
+  printf '%s\n' \
+    '# Written by arcade-launcher at each launch; loaded under every arcade game.' \
+    'config_save_on_exit = "false"' \
+    'desktop_menu_enable = "false"'
+}
+
+arcade_base_config() {
+  mkdir -p "${BASE_FILE%/*}" 2>/dev/null
+  arcade_base_lines >"$BASE_FILE" 2>/dev/null && printf '%s\n' "$BASE_FILE"
+}
+
 shader_dir() {
   local dir
   dir="$(cfg_get "$(base_config)" video_shader_dir 2>/dev/null)" || dir=""
@@ -621,10 +639,12 @@ launch_rom() {
   fi
 
   [[ -n "$RETROARCH_CONFIG" ]] && cmd+=(--config "$RETROARCH_CONFIG")
-  # The arcade binds, then this game's own settings over them: RetroArch
-  # takes several appended configs as one "|"-separated list, the last word
-  # winning.
+  # What every arcade game gets, then the arcade binds, then this game's own
+  # settings over them: RetroArch takes several appended configs as one
+  # "|"-separated list, the last word winning.
   local -a append=()
+  local base
+  base="$(arcade_base_config)" && append+=("$base")
   if [[ -f "$CONTROLS_FILE" ]]; then
     # A hand edit may have dropped the line that keeps these binds out of
     # the everyday config; it goes back before RetroArch can save over it.
@@ -861,9 +881,12 @@ probe_rom() {
   cfg="$(mktemp --suffix=.cfg)" log="$(mktemp)"
   # A test is not a game played: no window, no sound, nothing in RetroArch's
   # history or play time, and its config left exactly as it was.
-  printf '%s\n' 'video_driver = "null"' 'audio_driver = "null"' 'config_save_on_exit = "false"' \
-    'history_list_enable = "false"' 'content_runtime_log = "false"' \
-    'content_runtime_log_aggregate = "false"' >"$cfg"
+  {
+    arcade_base_lines
+    printf '%s\n' 'video_driver = "null"' 'audio_driver = "null"' \
+      'history_list_enable = "false"' 'content_runtime_log = "false"' \
+      'content_runtime_log_aggregate = "false"'
+  } >"$cfg"
   local -a cmd=("$RETROARCH_BIN" --verbose --max-frames=2 -L "$CORE_PATH")
   [[ -n "$RETROARCH_CONFIG" ]] && cmd+=(--config "$RETROARCH_CONFIG")
   cmd+=(--appendconfig "$cfg" "$rom")
@@ -1417,6 +1440,10 @@ conf_set() {
 
 readonly CONTROLS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/arcade-retroarch.cfg"
 readonly RETROARCH_MAIN_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/retroarch/retroarch.cfg"
+# What every arcade game is started with, under the arcade binds and the
+# game's own settings. Written fresh at each launch, so it holds whatever this
+# version of the launcher needs; see arcade_base_config.
+readonly BASE_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy-arcade-base.cfg"
 # One RetroArch config per game, "<rom>.cfg", loaded after the shared controls
 # so what is set there wins for that game only: picture settings, the
 # controls it needs changed, and the panel's own keys (arcade_*), which

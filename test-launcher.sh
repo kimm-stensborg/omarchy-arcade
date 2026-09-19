@@ -392,15 +392,19 @@ check "and the game is running" "$(games_running)" "1"
 first="$(running_pid)"
 check "under the pid the launcher wrote down" "$(kill -0 "$first" 2>/dev/null && echo alive)" "alive"
 check "the play is remembered" "$(grep -c "good.zip" "$history")" "1"
-check "the game's own settings are loaded after the arcade binds" \
-  "$(grep -v -- '--max-frames' "$ARCADE_TEST_ARGS" | grep -c -- '--appendconfig .*|.*/arcade-games/good.cfg')" "1"
+check "the arcade's base, then the binds, then the game's own settings" \
+  "$(grep -v -- '--max-frames' "$ARCADE_TEST_ARGS" | grep -c -- '--appendconfig [^ ]*/omarchy-arcade-base.cfg|[^ ]*arcade-retroarch.cfg|[^ ]*/arcade-games/good.cfg')" "1"
+check "the base keeps RetroArch's crash-prone desktop window from being built" \
+  "$(grep -c '^desktop_menu_enable = "false"$' "$XDG_RUNTIME_DIR/omarchy-arcade-base.cfg")" "1"
+check "and is never saved into RetroArch's own config" \
+  "$(grep -c '^config_save_on_exit = "false"$' "$XDG_RUNTIME_DIR/omarchy-arcade-base.cfg")" "1"
 check "the listing says it is playing" \
   "$("$launcher" --list | awk -F'\t' '$2 ~ /good.zip$/ { print ($3 > 0) "," $4 }')" "1,playing"
 sleep 1
 check "a game that started says nothing" "$(cat "$notes")" ""
 
 check "the arcade binds are layered over RetroArch's own config" \
-  "$(grep -c -- "--appendconfig $profile" "$sandbox/started")" "1"
+  "$(grep -c -- "--appendconfig [^ ]*$profile" "$sandbox/started")" "1"
 check "rather than replacing it" "$(grep -c -- "--config" "$sandbox/started")" "0"
 
 "$launcher" good
