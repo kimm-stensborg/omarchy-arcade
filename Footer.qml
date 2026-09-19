@@ -5,6 +5,7 @@ import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 import "Library.js" as Library
+import "Present.js" as Present
 import "Settings.js" as Settings
 import "Pad.js" as Pad
 
@@ -48,9 +49,9 @@ Item {
       textFormat: Text.PlainText
       // A game that won't start says why here, where there is room for all
       // of it; its tile only has room to say that it won't.
-      readonly property string problem: Library.problemNote(arcade.selected)
+      readonly property string problem: Present.problemNote(arcade.selected)
       readonly property bool urgent: (arcade.addNote && !arcade.addOk) || !!arcade.launchNote || !!problem
-      text: arcade.addNote || arcade.launchNote || problem || Library.gameFacts(arcade.selected, arcade.now)
+      text: arcade.addNote || arcade.launchNote || problem || Present.gameFacts(arcade.selected, arcade.now)
       color: urgent ? arcade.accent : arcade.foreground
       opacity: urgent ? 1 : 0.55
       font.family: arcade.fontFamily
@@ -67,7 +68,7 @@ Item {
     spacing: Style.space(18)
 
     Repeater {
-      model: Library.wallHints(arcade.stickLast && !!arcade.controllerParsed.pad,
+      model: Present.wallHints(arcade.stickLast && !!arcade.controllerParsed.pad,
                              Library.versionCount(arcade.selected) > 1,
                              arcade.selected ? { on: Library.isFavourite(arcade.selected),
                                                stickKey: Pad.favouriteStickKey(arcade.controllerParsed) } : null)
@@ -157,8 +158,8 @@ Item {
                : ""))
         : (arcade.selected
            ? arcade.selected.rom + "  ·  "
-             + (arcade.launchNote || Library.versionNote(arcade.selected)
-                || Library.shortenPath(arcade.selected.path, arcade.home))
+             + (arcade.launchNote || Present.versionNote(arcade.selected)
+                || Present.shortenPath(arcade.selected.path, arcade.home))
            : "")
       color: (arcade.settingsOpen
               && (arcade.settingsError || arcade.capturing || Settings.describeState(arcade.settingsRow)))

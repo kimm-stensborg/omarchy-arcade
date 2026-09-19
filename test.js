@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Unit tests for the panel's logic: Library.js, Controls.js, Settings.js, Pad.js.
+// Unit tests for the panel's logic: Library.js, Browse.js, Present.js,
+// Controls.js, Settings.js, Pad.js.
 //
 //     node test.js        # prints every failure, exits 1 if any
 //
@@ -13,7 +14,7 @@
 const fs = require("fs")
 const path = require("path")
 
-const MODULES = ["Library", "Controls", "Settings", "Pad"]
+const MODULES = ["Library", "Browse", "Present", "Controls", "Settings", "Pad"]
 
 function loadModules() {
   const loaded = {}

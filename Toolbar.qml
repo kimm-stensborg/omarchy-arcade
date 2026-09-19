@@ -4,7 +4,8 @@ import QtQuick
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
-import "Library.js" as Library
+import "Browse.js" as Browse
+import "Present.js" as Present
 
 // The order and the filters, each a chip showing what it is set to and the
 // key that steps it. A click steps it on, a right click back; a filter that is
@@ -18,18 +19,18 @@ Row {
 
   Repeater {
     model: [
-      { id: "sort", label: "Sort: " + Library.sortLabel(arcade.sortBy), key: "O", lit: false },
-      { id: "show", label: Library.showLabel(arcade.filters.show), key: "V", lit: arcade.filters.show !== "all" },
+      { id: "sort", label: "Sort: " + Browse.sortLabel(arcade.sortBy), key: "O", lit: false },
+      { id: "show", label: Browse.showLabel(arcade.filters.show), key: "V", lit: arcade.filters.show !== "all" },
       { id: "decade", label: arcade.filters.decade || "Any decade", key: "D", lit: !!arcade.filters.decade,
         hidden: arcade.decadeChoices.length < 2 },
       { id: "maker", label: arcade.filters.maker || "Any maker", key: "M", lit: !!arcade.filters.maker,
         hidden: arcade.makerChoices.length < 2 },
       { id: "genre", label: arcade.filters.genre || "Any genre", key: "G", lit: !!arcade.filters.genre,
         hidden: arcade.genreChoices.length < 2 },
-      { id: "players", label: Library.playersLabel(arcade.filters.players), key: "P",
+      { id: "players", label: Present.playersLabel(arcade.filters.players), key: "P",
         lit: !!arcade.filters.players, hidden: arcade.playerChoices.length < 2 },
       { id: "clear", label: "Clear filters", key: "0", lit: false,
-        hidden: !Library.filtersActive(arcade.filters) }
+        hidden: !Browse.filtersActive(arcade.filters) }
     ]
 
     Rectangle {

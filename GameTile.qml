@@ -5,6 +5,7 @@ import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 import "Library.js" as Library
+import "Present.js" as Present
 
 // One game on the wall: its title screen, its name and a word about it, the
 // pencil into its own settings and the heart that makes it a favourite.
@@ -16,7 +17,7 @@ Item {
   readonly property bool active: index === arcade.selectedIndex
   readonly property string art: Library.artFor(arcade.artMap, entry)
   readonly property bool pending: Library.artPending(arcade.artMap, entry)
-  readonly property string note: Library.tileNote(entry, arcade.now, arcade.sortBy)
+  readonly property string note: Present.tileNote(entry, arcade.now, arcade.sortBy)
   readonly property bool broken: Library.problemOf(entry).length > 0
   readonly property bool absent: !!entry && entry.installed === false
 
@@ -149,7 +150,7 @@ Item {
             anchors.centerIn: parent
             visible: tile.art.length === 0
             textFormat: Text.PlainText
-            text: Library.initials(tile.entry ? tile.entry.title : "")
+            text: Present.initials(tile.entry ? tile.entry.title : "")
             color: Util.alpha(arcade.foreground, tile.pending ? 0.28 : 0.42)
             font.family: arcade.fontFamily
             font.pixelSize: Math.round(well.height * 0.34)

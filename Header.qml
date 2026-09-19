@@ -4,7 +4,7 @@ import QtQuick
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
-import "Library.js" as Library
+import "Present.js" as Present
 
 // The top of the panel: the wordmark, the search line (or, in an editor, the
 // file it writes), and the add, settings and count buttons.
@@ -102,9 +102,9 @@ Item {
     textFormat: Text.PlainText
     // The file this editor writes: the game's own in the game editor.
     text: arcade.gameRom
-      ? Library.shortenPath(arcade.gameParsed.file, arcade.home)
+      ? Present.shortenPath(arcade.gameParsed.file, arcade.home)
         + (arcade.gameParsed.present ? "" : "  ·  made when you change something")
-      : Library.shortenPath(arcade.settingsParsed.configFile, arcade.home)
+      : Present.shortenPath(arcade.settingsParsed.configFile, arcade.home)
         + (arcade.settingsParsed.configPresent ? "" : "  ·  not created yet")
     color: arcade.foreground
     opacity: 0.45
@@ -193,8 +193,8 @@ Item {
       text: arcade.settingsOpen ? (arcade.gameRom ? arcade.gameTitle + "  ·  Esc goes back" : "Esc goes back")
         : (arcade.loading ? "reading library…"
         : (arcade.hasProblem ? "setup needed" : (arcade.filterText.trim().length > 0
-        ? Library.describeCount(arcade.rows.length, arcade.searchPool)
-        : Library.describeCount(arcade.rows.length, arcade.scoped.length))))
+        ? Present.describeCount(arcade.rows.length, arcade.searchPool)
+        : Present.describeCount(arcade.rows.length, arcade.scoped.length))))
       color: arcade.hasProblem && !arcade.settingsOpen ? arcade.accent : arcade.foreground
       opacity: arcade.hasProblem && !arcade.settingsOpen ? 1 : 0.7
       font.family: arcade.fontFamily

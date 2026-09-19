@@ -6,6 +6,8 @@ import QtQuick.Effects
 import qs.Commons
 import qs.Ui
 import "Library.js" as Library
+import "Browse.js" as Browse
+import "Present.js" as Present
 import "Controls.js" as Controls
 import "Settings.js" as Settings
 import "Pad.js" as Pad
@@ -83,7 +85,7 @@ Item {
   // just set to while that is being written there. "last played" by default,
   // so Enter on open replays the last game.
   property string sortChoice: ""
-  readonly property string sortBy: Library.sortKey(root.sortChoice
+  readonly property string sortBy: Browse.sortKey(root.sortChoice
     || (root.settingsParsed.values.SORT_BY || {}).value || "")
   // Which games are shown: all, favourites, played or never played, and a
   // decade and a maker ("" is any). For this open of the panel only, like
@@ -104,17 +106,17 @@ Item {
   readonly property var wallSource: root.groupVersions ? Library.groupGames(root.allGames, root.pickedVersions) : root.allGames
   // The games the Show chip has in view; the other filters offer only what
   // is among them, so browsing your own games never lists 400 makers.
-  readonly property var scoped: root.wallSource.filter(function(g) { return Library.inScope(g, root.filters.show) })
+  readonly property var scoped: root.wallSource.filter(function(g) { return Browse.inScope(g, root.filters.show) })
   // The same, every version on its own: what a search looks through.
-  readonly property int searchPool: root.allGames.filter(function(g) { return Library.inScope(g, root.filters.show) }).length
-  readonly property var decadeChoices: Library.decadeOptions(root.scoped)
-  readonly property var makerChoices: Library.makerOptions(root.scoped)
-  readonly property var genreChoices: Library.genreOptions(root.scoped)
-  readonly property var playerChoices: Library.playerOptions(root.scoped)
+  readonly property int searchPool: root.allGames.filter(function(g) { return Browse.inScope(g, root.filters.show) }).length
+  readonly property var decadeChoices: Browse.decadeOptions(root.scoped)
+  readonly property var makerChoices: Browse.makerOptions(root.scoped)
+  readonly property var genreChoices: Browse.genreOptions(root.scoped)
+  readonly property var playerChoices: Browse.playerOptions(root.scoped)
   // A search ranks by how well each game matches; the filters hold either way.
   readonly property var rows: root.searching
-    ? Library.applyFilters(Library.filterGames(root.allGames, root.filterText), root.filters)
-    : Library.sortGames(Library.applyFilters(root.wallSource, root.filters), root.sortBy)
+    ? Browse.applyFilters(Library.filterGames(root.allGames, root.filterText), root.filters)
+    : Browse.sortGames(Browse.applyFilters(root.wallSource, root.filters), root.sortBy)
   // The selected game's title screen, blurred behind everything. It follows
   // the selection a beat late, so holding the lever does not decode a
   // picture for every tile it passes.
@@ -133,7 +135,7 @@ Item {
   readonly property bool infoBarShown: !root.settingsOpen && !root.padTesting && !root.hasProblem
     && root.rows.length > 0
   // Said in the footer before Enter is pressed, when a game is already running.
-  readonly property string launchNote: Library.launchNote(root.selected, root.playing)
+  readonly property string launchNote: Present.launchNote(root.selected, root.playing)
 
   // Theme: shares the [menu] surface tokens, so a theme that styles the
   // Omarchy menu styles this panel too.
@@ -191,14 +193,14 @@ Item {
   property bool attract: false
   property var attractGames: []
   property int attractIndex: 0
-  readonly property int attractAfter: Library.attractSeconds(
+  readonly property int attractAfter: Browse.attractSeconds(
     (root.settingsParsed.values.ATTRACT_AFTER || {}).value || "60")
   readonly property var attractGame: root.attract && root.attractGames.length
     ? root.attractGames[root.attractIndex % root.attractGames.length] : null
 
   function startAttract() {
     // Only games you can play: a cabinet does not advertise what it lacks.
-    var order = Library.attractOrder(root.wallSource.filter(function(g) { return g.installed !== false }),
+    var order = Browse.attractOrder(root.wallSource.filter(function(g) { return g.installed !== false }),
                                      root.artMap, Date.now())
     // Two title screens at least, or it is just a picture.
     if (order.length < 2) { idleTimer.restart(); return }
@@ -242,27 +244,17 @@ Item {
   property var artRevision: ({})
 
   // ---- the stick
-  // What `arcade-launcher --controller` said: the controller RetroArch will
-  // give player 1, the profile it matches, and which button does what.
-  property var controllerParsed: Pad.parseController("")
-  // The live test: presses read straight off the device, numbered the way
-  // RetroArch numbers them and looked up in the same profile.
-  property bool padTesting: false
-  // Which view the stick is driving, and whether it was the last thing used:
-  // the footer then speaks stick rather than keyboard.
-  readonly property string stickView: root.settingsOpen ? "settings" : (root.hasProblem ? "problem" : "wall")
-  property bool stickLast: false
-  // While the panel is up it has the stick to itself, so a game running
-  // behind it does not also take every press.
-  onOpenedChanged: {
-    if (stickProc.running) stickProc.write(root.opened ? "grab\n" : "release\n")
-    if (!root.opened) root.stickLast = false
-  }
-  Component.onCompleted: {
-    controllerProc.running = true
-    stickProc.running = true
-  }
-  property var padState: ({ held: ({}), last: null, presses: 0 })
+  // All of it lives in Stick.qml; these are what the views read.
+  property alias controllerParsed: stick.controllerParsed
+  property alias padTesting: stick.padTesting
+  property alias padState: stick.padState
+  property alias stickLast: stick.stickLast
+  readonly property alias stickView: stick.view
+  function startPadTest() { stick.startTest() }
+  function stopPadTest() { stick.stopTest() }
+  function stopStickRepeat() { stick.stopRepeat() }
+
+  Stick { id: stick; arcade: root }
   readonly property var settingsRow: root.settingsIndex >= 0 && root.settingsIndex < root.settingsRows.length
     ? root.settingsRows[root.settingsIndex]
     : null
@@ -278,7 +270,7 @@ Item {
     Math.max(Style.space(1180), Math.round(panel.width * 0.72)))
   readonly property int cardHeight: Math.min(panel.height - Style.gapsOut * 2,
     Math.max(Style.space(760), Math.round(panel.height * 0.78)))
-  readonly property int columns: Library.columnsFor(wallView.grid.width, root.targetTileWidth, root.tileSpacing,
+  readonly property int columns: Browse.columnsFor(wallView.grid.width, root.targetTileWidth, root.tileSpacing,
     Settings.settingNumber(root.settingsParsed, "MAX_COLUMNS", 6))
   readonly property int cellWidth: root.columns > 0 ? Math.floor(wallView.grid.width / root.columns) : root.targetTileWidth
   // 4:3 for the art, plus a caption strip underneath. Arcade screens are
@@ -372,7 +364,7 @@ Item {
   // drawn, not after.
   function loadSettings() {
     if (!settingsProc.running) settingsProc.running = true
-    if (!controllerProc.running) controllerProc.running = true
+    stick.readController()
     if (!controlsProc.running) controlsProc.running = true
   }
 
@@ -380,7 +372,7 @@ Item {
   function openGame() {
     var game = root.selected
     if (!game || root.hasProblem) return
-    if (game.installed === false) { root.addOk = false; root.addNote = Library.problemNote(game); return }
+    if (game.installed === false) { root.addOk = false; root.addNote = Present.problemNote(game); return }
     root.closeSettings()
     root.gameRom = game.rom
     root.gameTitle = game.title
@@ -456,119 +448,10 @@ Item {
     root.loadSettings()
   }
 
-  function startPadTest() {
-    var pad = root.controllerParsed.pad
-    if (!pad) { root.settingsError = "no controller connected"; return }
-    root.cancelEdit()
-    root.stopStickRepeat()
-    root.padState = ({ held: ({}), last: null, presses: 0 })
-    root.padTesting = true
-  }
 
-  function stopPadTest() {
-    testExitTimer.stop()
-    root.padTesting = false
-  }
 
-  // ------------------------------------------------------------ the stick
 
-  // One line from the stick listener. The listener runs for as long as the
-  // shell does -- the plugin stays loaded -- so the stick can open the panel
-  // as well as work it.
-  function stickLine(line) {
-    if (line.indexOf("device\t") === 0 || line === "gone") {
-      // Plugged in or out: what the panel knows about it is stale either way.
-      root.stopStickRepeat()
-      if (!controllerProc.running) controllerProc.running = true
-      if (root.opened && line !== "gone") stickProc.write("grab\n")
-      if (line === "gone" && root.padTesting) root.stopPadTest()
-      return
-    }
 
-    var press = Pad.padPress(root.controllerParsed, line)
-    if (!press) return
-    if (root.opened && press.down && !root.padTesting && root.wake()) return
-
-    if (root.padTesting) {
-      var next = Pad.padEvent(root.padState, root.controllerParsed, line)
-      if (next) root.padState = next
-      // Home is being tested like any button, so a tap only shows what it
-      // does; held, it ends the test.
-      if (press.retropad === "menu_toggle") {
-        if (press.down) testExitTimer.restart()
-        else testExitTimer.stop()
-      }
-      return
-    }
-
-    if (!root.opened) {
-      // Home is the way back to the arcade: out of the game if one is
-      // running, then the wall, ready for the next pick.
-      if (press.down && press.retropad === "menu_toggle" && !homeProc.running) homeProc.running = true
-      return
-    }
-
-    var action = Pad.stickAction(press.retropad, root.stickView)
-    if (!action) return
-    if (!press.down) {
-      if (stickRepeat.action === action) root.stopStickRepeat()
-      return
-    }
-    root.stickLast = true
-    root.stickAction(action)
-    if (Pad.stickRepeats(action)) {
-      stickRepeat.action = action
-      stickRepeat.interval = 380
-      stickRepeat.restart()
-    }
-  }
-
-  function stopStickRepeat() {
-    stickRepeat.stop()
-    stickRepeat.action = ""
-  }
-
-  function stickAction(action) {
-    var view = root.stickView
-    // Half-typed text belongs to the keyboard; the stick can only let go of it.
-    if (root.editing || root.capturing) {
-      if (action === "back" || action === "close") root.cancelEdit()
-      return
-    }
-    if (action === "close") { root.close(); return }
-    if (view === "settings") {
-      var row = root.settingsRow
-      if (action === "up") root.moveSetting(-1)
-      else if (action === "down") root.moveSetting(1)
-      else if (action === "left") root.stepSetting(-1)
-      else if (action === "right") root.stepSetting(1)
-      else if (action === "back") root.closeSettings()
-      else if (action === "activate" && row) {
-        if (row.kind === "choice") root.stepSetting(1)
-        else if (row.kind === "padtest") root.startPadTest()
-        else if (row.kind === "image") root.pickImage()
-        else if (row.kind === "check") root.startCheck()
-      }
-      return
-    }
-    if (action === "settings") { root.openSettings(); return }
-    if (action === "recheck") { root.refresh(); return }
-    if (action === "back") {
-      if (root.filterText) root.setFilter("")
-      else if (Library.filtersActive(root.filters)) root.clearFilters()
-      else root.close()
-      return
-    }
-    if (action === "play") { root.activate(); return }
-    if (action === "favourite") { root.toggleFavourite(); return }
-    if (action === "sort") { root.stepSort(1); return }
-    if (action === "show") { root.stepFilter("show", 1); return }
-    if (["left", "right", "up", "down", "page-up", "page-down"].indexOf(action) >= 0) root.move(action)
-    else if ((action === "version-prev" || action === "version-next")
-             && root.selected && Library.versionCount(root.selected) > 1)
-      root.pickedVersions = Library.stepVersion(root.pickedVersions, root.selected,
-                                              action === "version-prev" ? -1 : 1)
-  }
 
   function closeSettings() {
     root.stopPadTest()
@@ -583,7 +466,7 @@ Item {
   function moveSetting(delta) {
     if (root.settingsRows.length === 0) return
     root.cancelEdit()
-    root.settingsIndex = Library.wrapIndex(root.settingsIndex, delta, root.settingsRows.length)
+    root.settingsIndex = Browse.wrapIndex(root.settingsIndex, delta, root.settingsRows.length)
     Qt.callLater(function() { settingsView.positionViewAtIndex(root.settingsIndex, ListView.Contain) })
   }
 
@@ -722,7 +605,7 @@ Item {
   function stepSetting(delta) {
     var row = root.settingsRow
     if (!row || root.editing) return
-    if (row.kind === "choice") root.applySetting(row, Library.cycleOption(row.options, row.value, delta))
+    if (row.kind === "choice") root.applySetting(row, Browse.cycleOption(row.options, row.value, delta))
     else if (row.kind === "number") root.applySetting(row, Settings.stepNumber(row, row.value, delta))
   }
 
@@ -883,16 +766,16 @@ Item {
 
   // ------------------------------------------------------------- navigation
 
-  // up, down, left, right, page-up, page-down; see Library.wallMove.
+  // up, down, left, right, page-up, page-down; see Browse.wallMove.
   function move(action) {
     if (root.rows.length === 0) return
     gate.reset()
     if (!addProc.running) { root.statusMessage = ""; root.addNote = "" }
-    root.setSelected(Library.wallMove(root.selectedIndex, action, root.columns, 0, root.rows.length))
+    root.setSelected(Browse.wallMove(root.selectedIndex, action, root.columns, 0, root.rows.length))
   }
 
   function setSelected(index) {
-    root.selectedIndex = Library.clampIndex(index, root.rows.length)
+    root.selectedIndex = Browse.clampIndex(index, root.rows.length)
     Qt.callLater(function() { wallView.grid.positionViewAtIndex(root.selectedIndex, GridView.Contain) })
   }
 
@@ -910,7 +793,7 @@ Item {
   // the wall opens that way next time too.
   function stepSort(delta) {
     var game = root.selected
-    var next = Library.cycleOption(Library.sortKeys(), root.sortBy, delta)
+    var next = Browse.cycleOption(Browse.sortKeys(), root.sortBy, delta)
     root.sortChoice = next
     var pending = ({})
     for (var key in root.pendingSettings) pending[key] = root.pendingSettings[key]
@@ -923,14 +806,14 @@ Item {
   // Alt+V, Alt+D, Alt+M (R3 on the stick for the first): step one filter.
   function stepFilter(which, delta) {
     var game = root.selected
-    var options = which === "show" ? Library.showKeys()
+    var options = which === "show" ? Browse.showKeys()
       : which === "decade" ? root.decadeChoices
       : which === "genre" ? root.genreChoices
       : which === "players" ? root.playerChoices
       : root.makerChoices
     if (options.length < 2) return
-    root.filters = Library.stepFilter(root.filters, which, options, delta)
-    if (Library.needsCatalogue(root.filters.show)) root.loadCatalogue()
+    root.filters = Browse.stepFilter(root.filters, which, options, delta)
+    if (Browse.needsCatalogue(root.filters.show)) root.loadCatalogue()
     root.keepSelection(game, 0)
   }
 
@@ -1022,7 +905,7 @@ Item {
     // A game you do not have: say what it would take, rather than nothing.
     if (root.selected && root.selected.installed === false) {
       root.addOk = false
-      root.addNote = Library.problemNote(root.selected)
+      root.addNote = Present.problemNote(root.selected)
       return
     }
     root.launch(root.selected)
@@ -1066,7 +949,7 @@ Item {
       onStreamFinished: {
         root.games = Library.parseList(text)
         root.loaded = true
-        if (root.catalogueLoaded || Library.needsCatalogue(root.filters.show)) root.loadCatalogue()
+        if (root.catalogueLoaded || Browse.needsCatalogue(root.filters.show)) root.loadCatalogue()
         root.selectedIndex = 0
         if (root.pendingSelectRom) {
           var rom = root.pendingSelectRom
@@ -1103,7 +986,7 @@ Item {
     }
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text && text.trim()) root.settingsError = Library.launcherError(text)
+      onStreamFinished: if (text && text.trim()) root.settingsError = Present.launcherError(text)
     }
   }
 
@@ -1113,7 +996,7 @@ Item {
     property string rom: ""
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text && text.trim()) root.settingsError = Library.launcherError(text)
+      onStreamFinished: if (text && text.trim()) root.settingsError = Present.launcherError(text)
     }
     onExited: function(exitCode) {
       var effects = Settings.gameWriteEffects(gameSetProc.changedKeys)
@@ -1146,7 +1029,7 @@ Item {
         gameSetProc.command = [root.launcher, "--game-image", imageProc.rom, path]
         gameSetProc.running = true
       } else if (imageErr.text && imageErr.text.trim()) {
-        root.settingsError = Library.launcherError(imageErr.text)
+        root.settingsError = Present.launcherError(imageErr.text)
       }
     }
   }
@@ -1158,7 +1041,7 @@ Item {
     command: [root.launcher, "--check"]
     stdout: SplitParser {
       onRead: function(line) {
-        var progress = Library.addProgress(line)
+        var progress = Present.addProgress(line)
         if (progress) { root.checkProgress = progress; root.statusMessage = progress; return }
         var verdict = line.split("\t")[0]
         if (verdict === "broken") checkProc.found++
@@ -1182,7 +1065,7 @@ Item {
     id: favouriteProc
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text) root.addNote = Library.launcherError(text)
+      onStreamFinished: if (text) root.addNote = Present.launcherError(text)
     }
     // The file is the truth: if it could not be written, the wall goes back
     // to what it says.
@@ -1234,13 +1117,13 @@ Item {
     stdout: SplitParser {
       onRead: function(line) {
         root.addOutput += line + "\n"
-        var progress = Library.addProgress(line)
+        var progress = Present.addProgress(line)
         if (progress) root.statusMessage = progress
       }
     }
     onRunningChanged: {
       if (running) return
-      var summary = Library.addSummary(root.addOutput)
+      var summary = Present.addSummary(root.addOutput)
       root.statusMessage = summary.title
       if (!root.addNote) root.addNote = summary.detail
       root.addOk = root.addOk && summary.ok
@@ -1277,56 +1160,15 @@ Item {
       } else if (pickErr.text && pickErr.text.trim()) {
         // No chooser to open: say so where the result would have gone.
         root.statusMessage = "Could not open a file chooser"
-        root.addNote = Library.launcherError(pickErr.text)
+        root.addNote = Present.launcherError(pickErr.text)
         root.addOk = false
       }
     }
   }
 
-  Process {
-    id: controllerProc
-    command: [root.launcher, "--controller"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.controllerParsed = Pad.parseController(text)
-    }
-  }
 
-  // The stick, followed through unplugging and replugging for as long as the
-  // shell runs. "grab" and "release" go the other way, on its stdin.
-  Process {
-    id: stickProc
-    command: [root.launcher, "--controller", "--follow"]
-    stdinEnabled: true
-    stdout: SplitParser {
-      onRead: function(line) { root.stickLine(line) }
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: if (text && text.trim().length > 0) console.warn(root.pluginId + ":", text.trim())
-    }
-    onRunningChanged: if (running && root.opened) Qt.callLater(function() { stickProc.write("grab\n") })
-    // It only ends if something went wrong; try again shortly rather than
-    // leave the stick dead until the shell restarts.
-    onExited: stickRestart.restart()
-  }
 
-  Timer {
-    id: stickRestart
-    interval: 3000
-    onTriggered: stickProc.running = true
-  }
 
-  // Home with the panel shut: close the game the launcher started, if any,
-  // then open the panel. 72 means a RetroArch started some other way is
-  // running; that one is not ours to close, so the panel stays shut.
-  Process {
-    id: homeProc
-    command: [root.launcher, "--stop"]
-    onExited: function(exitCode) {
-      if ((exitCode === 0 || exitCode === 1) && !root.opened) root.open("{}")
-    }
-  }
 
   Timer {
     id: backdropTimer
@@ -1336,24 +1178,7 @@ Item {
   onSelectedChanged: backdropTimer.restart()
   onArtMapChanged: if (!root.backdrop) backdropTimer.restart()
 
-  // A held lever keeps moving: a pause, then a steady step.
-  Timer {
-    id: stickRepeat
-    property string action: ""
-    interval: 380
-    repeat: true
-    onTriggered: {
-      stickRepeat.interval = 90
-      if (stickRepeat.action) root.stickAction(stickRepeat.action)
-    }
-  }
 
-  // Home held for most of a second ends the controller test.
-  Timer {
-    id: testExitTimer
-    interval: 900
-    onTriggered: root.stopPadTest()
-  }
 
   Process {
     id: controlsProc

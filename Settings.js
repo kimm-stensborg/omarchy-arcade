@@ -1,5 +1,5 @@
 .pragma library
-.import "Library.js" as Library
+.import "Present.js" as Present
 .import "Controls.js" as Controls
 
 // The arcade-wide settings (arcade.conf, through the launcher) and one
@@ -171,7 +171,7 @@ function describeSource(row) {
 function displayValue(row, home) {
   if (!row) return ""
   if (row.labels) return row.labels[row.value] !== undefined ? row.labels[row.value] : row.value
-  if (row.value) return Library.shortenPath(row.value, home)
+  if (row.value) return Present.shortenPath(row.value, home)
   if (row.kind === "number") return ""
   return row.key === "CORE_PATH" || row.key === "MENU_CMD" ? "autodetect" : "none"
 }

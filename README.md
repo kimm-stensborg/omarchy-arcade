@@ -701,8 +701,11 @@ Wall.qml                       the grid of games, the empty note, a setup proble
 SettingsList.qml               the editor rows, for the arcade and for one game
 PadTest.qml                    the stick test
 Footer.qml                     the info bar and keycaps, or the plain hints
+Stick.qml                      the controller: Home opens the arcade, presses work the panel, the test
 AttractMode.qml                title screens, one after another, when left alone
-Library.js                     parsing, versions, sorting, filters, search, formatting
+Library.js                     the games: parsing, versions, what is known about each, search, artwork
+Browse.js                      the wall's order, the Show choice and filters, moving around, attract order
+Present.js                     what the panel says: facts, notes, hints, how a drop went
 Settings.js                    the arcade's settings and a game's own, as editor rows
 Controls.js                    key names and the cabinet control rows
 Pad.js                         the stick: its profile, its presses, what they do
@@ -710,6 +713,7 @@ test.js                        node test.js
 test-launcher.sh               ./test-launcher.sh - the config and bind writers, in bash
 manifest.json                  plugin manifest
 bin/arcade-launcher            lists and launches; the panel's whole backend
+lib/launcher/*.sh              the launcher's parts, sourced in order: config, listing, launch, add...
 bin/arcade-rdb-dump            libretro .rdb -> TSV extractor (python3, no deps)
 bin/arcade-artwork             title-screen fetcher and cache (python3, no deps)
 bin/arcade-pad                 finds the stick, matches RetroArch's profile, follows its presses
