@@ -1681,8 +1681,12 @@ Item {
               anchors.rightMargin: Style.space(12)
               anchors.verticalCenter: parent.verticalCenter
               textFormat: Text.PlainText
-              text: Model.shortenPath(root.settingsParsed.configFile, root.home)
-                + (root.settingsParsed.configPresent ? "" : "  ·  not created yet")
+              // The file this editor writes: the game's own in the game editor.
+              text: root.gameRom
+                ? Model.shortenPath(root.gameParsed.file, root.home)
+                  + (root.gameParsed.present ? "" : "  ·  made when you change something")
+                : Model.shortenPath(root.settingsParsed.configFile, root.home)
+                  + (root.settingsParsed.configPresent ? "" : "  ·  not created yet")
               color: root.foreground
               opacity: 0.45
               font.family: root.fontFamily
