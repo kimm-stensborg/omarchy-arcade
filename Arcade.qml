@@ -5,7 +5,10 @@ import QtQuick
 import QtQuick.Effects
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
+import "Library.js" as Library
+import "Controls.js" as Controls
+import "Settings.js" as Settings
+import "Pad.js" as Pad
 
 // Arcade launcher. A wall of title screens, one per ROM, with a line to type
 // in above it; Enter boots the selection into RetroArch. The panel knows
@@ -69,7 +72,7 @@ Item {
   property int editingIndex: -1
   property string editText: ""
   property string settingsError: ""
-  // Values taken but not yet in the file; see Model.withPending.
+  // Values taken but not yet in the file; see Settings.withPending.
   property var pendingSettings: ({})
   // The cabinet binds, from the arcade-only RetroArch profile.
   property var controlsParsed: ({ file: "", present: false, preset: "custom", values: ({}) })
@@ -80,7 +83,7 @@ Item {
   // just set to while that is being written there. "last played" by default,
   // so Enter on open replays the last game.
   property string sortChoice: ""
-  readonly property string sortBy: Model.sortKey(root.sortChoice
+  readonly property string sortBy: Library.sortKey(root.sortChoice
     || (root.settingsParsed.values.SORT_BY || {}).value || "")
   // Which games are shown: all, favourites, played or never played, and a
   // decade and a maker ("" is any). For this open of the panel only, like
@@ -93,19 +96,19 @@ Item {
   // group -> path of the version Tab last picked, for this open of the panel.
   property var pickedVersions: ({})
   readonly property bool searching: root.filterText.trim().length > 0
-  readonly property var wallSource: root.groupVersions ? Model.groupGames(root.games, root.pickedVersions) : root.games
-  readonly property var decadeChoices: Model.decadeOptions(root.wallSource)
-  readonly property var makerChoices: Model.makerOptions(root.wallSource)
+  readonly property var wallSource: root.groupVersions ? Library.groupGames(root.games, root.pickedVersions) : root.games
+  readonly property var decadeChoices: Library.decadeOptions(root.wallSource)
+  readonly property var makerChoices: Library.makerOptions(root.wallSource)
   // A search ranks by how well each game matches; the filters hold either way.
   readonly property var rows: root.searching
-    ? Model.applyFilters(Model.filterGames(root.games, root.filterText), root.filters)
-    : Model.sortGames(Model.applyFilters(root.wallSource, root.filters), root.sortBy)
+    ? Library.applyFilters(Library.filterGames(root.games, root.filterText), root.filters)
+    : Library.sortGames(Library.applyFilters(root.wallSource, root.filters), root.sortBy)
   // The selected game's title screen, blurred behind everything. It follows
   // the selection a beat late, so holding the lever does not decode a
   // picture for every tile it passes.
   property string backdrop: ""
   // The game RetroArch is running right now, if the launcher started one.
-  readonly property var playing: Model.playingGame(root.games)
+  readonly property var playing: Library.playingGame(root.games)
   // Seconds since the epoch as of this open, for "2 hours ago". Taken once:
   // a label that ticks while you look at it is noise.
   property real now: Date.now() / 1000
@@ -118,7 +121,7 @@ Item {
   readonly property bool infoBarShown: !root.settingsOpen && !root.padTesting && !root.hasProblem
     && root.rows.length > 0
   // Said in the footer before Enter is pressed, when a game is already running.
-  readonly property string launchNote: Model.launchNote(root.selected, root.playing)
+  readonly property string launchNote: Library.launchNote(root.selected, root.playing)
 
   // Theme: shares the [menu] surface tokens, so a theme that styles the
   // Omarchy menu styles this panel too.
@@ -152,10 +155,10 @@ Item {
   // One editor, two files: arcade.conf decides what the panel does, the arcade
   // RetroArch profile decides what the cabinet's buttons do.
   readonly property var settingsRows: root.gameRom
-    ? Model.withPending(Model.gameRows(root.gameParsed), root.pendingGame)
-    : Model.withPending(Model.settingsRows(root.settingsParsed), root.pendingSettings)
-      .concat(Model.controllerRows(root.controllerParsed))
-      .concat(Model.controlRows(root.controlsParsed))
+    ? Settings.withPending(Settings.gameRows(root.gameParsed), root.pendingGame)
+    : Settings.withPending(Settings.settingsRows(root.settingsParsed), root.pendingSettings)
+      .concat(Pad.controllerRows(root.controllerParsed))
+      .concat(Controls.controlRows(root.controlsParsed))
 
   // ---- one game's settings
   // The same editor, showing one game: its name, artwork, picture and the
@@ -163,7 +166,7 @@ Item {
   // arcade-wide settings.
   property string gameRom: ""
   property string gameTitle: ""
-  property var gameParsed: Model.parseGame("")
+  property var gameParsed: Settings.parseGame("")
   property var pendingGame: ({})
   // rom -> a number bumped when its picture is replaced under the same
   // file name, so the tile does not keep showing the old one from cache.
@@ -172,7 +175,7 @@ Item {
   // ---- the stick
   // What `arcade-launcher --controller` said: the controller RetroArch will
   // give player 1, the profile it matches, and which button does what.
-  property var controllerParsed: Model.parseController("")
+  property var controllerParsed: Pad.parseController("")
   // The live test: presses read straight off the device, numbered the way
   // RetroArch numbers them and looked up in the same profile.
   property bool padTesting: false
@@ -201,14 +204,14 @@ Item {
   // Title screens want room. TILE_SIZE is the width a tile aims for and
   // MAX_COLUMNS the most that go in a row, both from arcade.conf: the defaults
   // give a wide monitor bigger art rather than more of it.
-  readonly property int targetTileWidth: Math.max(Style.space(Model.settingNumber(root.settingsParsed, "TILE_SIZE", 300)), 140)
+  readonly property int targetTileWidth: Math.max(Style.space(Settings.settingNumber(root.settingsParsed, "TILE_SIZE", 300)), 140)
   readonly property int cardWidth: Math.min(panel.width - Style.gapsOut * 2,
     Math.max(Style.space(1180), Math.round(panel.width * 0.72)))
   readonly property int cardHeight: Math.min(panel.height - Style.gapsOut * 2,
     Math.max(Style.space(760), Math.round(panel.height * 0.78)))
-  readonly property int columns: Model.columnsFor(grid.width, root.targetTileWidth, root.tileSpacing,
-    Model.settingNumber(root.settingsParsed, "MAX_COLUMNS", 6))
-  readonly property int cellWidth: root.columns > 0 ? Math.floor(grid.width / root.columns) : root.targetTileWidth
+  readonly property int columns: Library.columnsFor(wallView.grid.width, root.targetTileWidth, root.tileSpacing,
+    Settings.settingNumber(root.settingsParsed, "MAX_COLUMNS", 6))
+  readonly property int cellWidth: root.columns > 0 ? Math.floor(wallView.grid.width / root.columns) : root.targetTileWidth
   // 4:3 for the art, plus a caption strip underneath. Arcade screens are
   // that shape, so anything else would letterbox every tile. The caption is
   // measured in real line heights, not font sizes: a line is taller than
@@ -224,6 +227,8 @@ Item {
 
   FontMetrics { id: nameMetrics; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
   FontMetrics { id: noteMetrics; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+  readonly property real nameLineHeight: nameMetrics.height
+  readonly property real noteLineHeight: noteMetrics.height
 
   // ------------------------------------------------------------- lifecycle
 
@@ -265,6 +270,12 @@ Item {
 
   function ping() { return "ok" }
 
+  // For the views in their own files: the keyboard back to the panel, the
+  // gate that tells a moved pointer from a still one, the caret's blink.
+  function focusKeys() { keyCatcher.forceActiveFocus() }
+  readonly property var pointerGate: gate
+  readonly property bool caretOn: caretBlink.on
+
   // ---------------------------------------------------------------- artwork
 
   // Ask about what is on screen first, then the rest of the library. Cached
@@ -272,8 +283,8 @@ Item {
   // dressed before it is drawn.
   function requestArt() {
     if (artProc.running || root.games.length === 0) return
-    var wanted = Model.artWanted(root.artMap, root.rows, 24)
-    if (wanted.length === 0) wanted = Model.artWanted(root.artMap, root.games, 24)
+    var wanted = Library.artWanted(root.artMap, root.rows, 24)
+    if (wanted.length === 0) wanted = Library.artWanted(root.artMap, root.games, 24)
     if (wanted.length === 0) return
     artProc.command = [root.artworkTool].concat(wanted)
     artProc.running = true
@@ -300,7 +311,7 @@ Item {
     root.closeSettings()
     root.gameRom = game.rom
     root.gameTitle = game.title
-    root.gameParsed = Model.parseGame("")
+    root.gameParsed = Settings.parseGame("")
     root.pendingGame = ({})
     root.settingsIndex = 0
     root.settingsOpen = true
@@ -313,7 +324,7 @@ Item {
   function flushGame() {
     gameWriteTimer.stop()
     if (!root.gameRom) return
-    var args = Model.pendingArgs(root.pendingGame)
+    var args = Settings.pendingArgs(root.pendingGame)
     if (args.length === 0) return
     if (gameSetProc.running) { gameWriteTimer.restart(); return }
     gameSetProc.changedKeys = Object.keys(root.pendingGame)
@@ -390,11 +401,11 @@ Item {
       return
     }
 
-    var press = Model.padPress(root.controllerParsed, line)
+    var press = Pad.padPress(root.controllerParsed, line)
     if (!press) return
 
     if (root.padTesting) {
-      var next = Model.padEvent(root.padState, root.controllerParsed, line)
+      var next = Pad.padEvent(root.padState, root.controllerParsed, line)
       if (next) root.padState = next
       // Home is being tested like any button, so a tap only shows what it
       // does; held, it ends the test.
@@ -412,7 +423,7 @@ Item {
       return
     }
 
-    var action = Model.stickAction(press.retropad, root.stickView)
+    var action = Pad.stickAction(press.retropad, root.stickView)
     if (!action) return
     if (!press.down) {
       if (stickRepeat.action === action) root.stopStickRepeat()
@@ -420,7 +431,7 @@ Item {
     }
     root.stickLast = true
     root.stickAction(action)
-    if (Model.stickRepeats(action)) {
+    if (Pad.stickRepeats(action)) {
       stickRepeat.action = action
       stickRepeat.interval = 380
       stickRepeat.restart()
@@ -458,7 +469,7 @@ Item {
     if (action === "recheck") { root.refresh(); return }
     if (action === "back") {
       if (root.filterText) root.setFilter("")
-      else if (Model.filtersActive(root.filters)) root.clearFilters()
+      else if (Library.filtersActive(root.filters)) root.clearFilters()
       else root.close()
       return
     }
@@ -468,8 +479,8 @@ Item {
     if (action === "show") { root.stepFilter("show", 1); return }
     if (["left", "right", "up", "down", "page-up", "page-down"].indexOf(action) >= 0) root.move(action)
     else if ((action === "version-prev" || action === "version-next")
-             && root.selected && Model.versionCount(root.selected) > 1)
-      root.pickedVersions = Model.stepVersion(root.pickedVersions, root.selected,
+             && root.selected && Library.versionCount(root.selected) > 1)
+      root.pickedVersions = Library.stepVersion(root.pickedVersions, root.selected,
                                               action === "version-prev" ? -1 : 1)
   }
 
@@ -486,8 +497,8 @@ Item {
   function moveSetting(delta) {
     if (root.settingsRows.length === 0) return
     root.cancelEdit()
-    root.settingsIndex = Model.wrapIndex(root.settingsIndex, delta, root.settingsRows.length)
-    Qt.callLater(function() { settingsList.positionViewAtIndex(root.settingsIndex, ListView.Contain) })
+    root.settingsIndex = Library.wrapIndex(root.settingsIndex, delta, root.settingsRows.length)
+    Qt.callLater(function() { settingsView.positionViewAtIndex(root.settingsIndex, ListView.Contain) })
   }
 
   function beginEdit(seed) {
@@ -524,7 +535,7 @@ Item {
     var row = root.settingsRow
     if (!row) { root.cancelEdit(); return }
 
-    var name = Model.retroarchKey(event.key, event.modifiers, event.text)
+    var name = Controls.retroarchKey(event.key, event.modifiers, event.text)
     if (!name) {
       root.settingsError = "RetroArch has no name for that key"
       return
@@ -550,13 +561,13 @@ Item {
       return
     }
 
-    var problem = Model.validateSetting(row, value)
+    var problem = Settings.validateSetting(row, value)
     if (problem) {
       root.settingsError = problem
       return
     }
 
-    var next = Model.normalizeSetting(row, value)
+    var next = Settings.normalizeSetting(row, value)
     root.cancelEdit()
     if (next === row.value) return
     if (row.game) { root.queueGame(row.key, next); return }
@@ -589,7 +600,7 @@ Item {
   // speed of the key and the file catches up when it stops.
   function flushSettings() {
     writeTimer.stop()
-    var args = Model.pendingArgs(root.pendingSettings)
+    var args = Settings.pendingArgs(root.pendingSettings)
     if (args.length === 0) return
     if (setProc.running) { writeTimer.restart(); return }
 
@@ -604,7 +615,7 @@ Item {
   // later change of default is picked up.
   function resetSetting() {
     var row = root.settingsRow
-    if (!row || !Model.isOverridden(row)) return
+    if (!row || !Settings.isOverridden(row)) return
     root.cancelEdit()
 
     // A control goes back to whatever RetroArch itself has bound; a layout row
@@ -624,8 +635,8 @@ Item {
   function stepSetting(delta) {
     var row = root.settingsRow
     if (!row || root.editing) return
-    if (row.kind === "choice") root.applySetting(row, Model.cycleOption(row.options, row.value, delta))
-    else if (row.kind === "number") root.applySetting(row, Model.stepNumber(row, row.value, delta))
+    if (row.kind === "choice") root.applySetting(row, Library.cycleOption(row.options, row.value, delta))
+    else if (row.kind === "number") root.applySetting(row, Settings.stepNumber(row, row.value, delta))
   }
 
   function isTypable(event) {
@@ -685,19 +696,114 @@ Item {
     return false
   }
 
+  // Every key on the wall, the editors and the stick test: the panel holds
+  // the keyboard exclusively while it is up, so this is all of them.
+  function handleKey(event) {
+  root.stickLast = false
+  // The test owns the keyboard while it runs: the stick is what is
+  // being tested, and Esc is the way back.
+  if (root.padTesting) {
+    if (event.key === Qt.Key_Escape) root.stopPadTest()
+    event.accepted = true
+    return
+  }
+  if (root.settingsOpen) {
+    event.accepted = root.settingsKey(event)
+    return
+  }
+  // Alt+S for the settings, beside Alt+A for adding games.
+  if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_S) {
+    root.openSettings()
+    event.accepted = true
+    return
+  }
+  // Alt+F makes the selected game a favourite; Alt+O sorts, and
+  // Alt+V, Alt+D, Alt+M filter -- with Shift, the other way round.
+  if ((event.modifiers & Qt.AltModifier) && !root.hasProblem) {
+    var back = (event.modifiers & Qt.ShiftModifier) ? -1 : 1
+    var handled = true
+    if (event.key === Qt.Key_F) root.toggleFavourite()
+    else if (event.key === Qt.Key_O) root.stepSort(back)
+    else if (event.key === Qt.Key_V) root.stepFilter("show", back)
+    else if (event.key === Qt.Key_D) root.stepFilter("decade", back)
+    else if (event.key === Qt.Key_M) root.stepFilter("maker", back)
+    else if (event.key === Qt.Key_0) root.clearFilters()
+    else if (event.key === Qt.Key_E) root.openGame()
+    else handled = false
+    if (handled) { event.accepted = true; return }
+  }
+  // Alt+A adds games: the file chooser.
+  if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
+    root.pickGames()
+    event.accepted = true
+    return
+  }
+  if (event.key === Qt.Key_Escape) {
+    root.close()
+    event.accepted = true
+  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+    root.activate()
+    event.accepted = true
+  } else if (event.key === Qt.Key_Right || (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier))) {
+    root.move("right")
+    event.accepted = true
+  } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
+    root.move("left")
+    event.accepted = true
+  } else if (event.key === Qt.Key_Down) {
+    root.move("down")
+    event.accepted = true
+  } else if (event.key === Qt.Key_Up) {
+    root.move("up")
+    event.accepted = true
+  } else if (event.key === Qt.Key_PageDown) {
+    root.move("page-down")
+    event.accepted = true
+  } else if (event.key === Qt.Key_PageUp) {
+    root.move("page-up")
+    event.accepted = true
+  } else if (event.key === Qt.Key_Home) {
+    root.setSelected(0)
+    event.accepted = true
+  } else if (event.key === Qt.Key_End) {
+    root.setSelected(root.rows.length - 1)
+    event.accepted = true
+  } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+    // Another version of the same game, in the same tile: the wall
+    // does not move, only what Enter will start.
+    if (root.selected && Library.versionCount(root.selected) > 1)
+      root.pickedVersions = Library.stepVersion(root.pickedVersions, root.selected,
+                                              event.key === Qt.Key_Backtab ? -1 : 1)
+    event.accepted = true
+  } else if (event.key === Qt.Key_F5) {
+    // The config file is as likely to have changed as the ROM
+    // directory, and a hand edit should not need the panel reopened.
+    root.loadSettings()
+    root.refresh()
+    event.accepted = true
+  } else if (Util.editsFilter(event, root.filterText)) {
+    root.setFilter(Util.editedFilter(event, root.filterText))
+    event.accepted = true
+  } else if (event.text && event.text.length === 1
+             && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+    root.setFilter(root.filterText + event.text)
+    event.accepted = true
+  }
+  }
+
   // ------------------------------------------------------------- navigation
 
-  // up, down, left, right, page-up, page-down; see Model.wallMove.
+  // up, down, left, right, page-up, page-down; see Library.wallMove.
   function move(action) {
     if (root.rows.length === 0) return
-    pointerGate.reset()
+    gate.reset()
     if (!addProc.running) { root.statusMessage = ""; root.addNote = "" }
-    root.setSelected(Model.wallMove(root.selectedIndex, action, root.columns, 0, root.rows.length))
+    root.setSelected(Library.wallMove(root.selectedIndex, action, root.columns, 0, root.rows.length))
   }
 
   function setSelected(index) {
-    root.selectedIndex = Model.clampIndex(index, root.rows.length)
-    Qt.callLater(function() { grid.positionViewAtIndex(root.selectedIndex, GridView.Contain) })
+    root.selectedIndex = Library.clampIndex(index, root.rows.length)
+    Qt.callLater(function() { wallView.grid.positionViewAtIndex(root.selectedIndex, GridView.Contain) })
   }
 
   // The selection stays on the game it was on when the wall reorders or
@@ -714,7 +820,7 @@ Item {
   // the wall opens that way next time too.
   function stepSort(delta) {
     var game = root.selected
-    var next = Model.cycleOption(Model.sortKeys(), root.sortBy, delta)
+    var next = Library.cycleOption(Library.sortKeys(), root.sortBy, delta)
     root.sortChoice = next
     var pending = ({})
     for (var key in root.pendingSettings) pending[key] = root.pendingSettings[key]
@@ -727,10 +833,10 @@ Item {
   // Alt+V, Alt+D, Alt+M (R3 on the stick for the first): step one filter.
   function stepFilter(which, delta) {
     var game = root.selected
-    var options = which === "show" ? Model.showKeys()
+    var options = which === "show" ? Library.showKeys()
       : (which === "decade" ? root.decadeChoices : root.makerChoices)
     if (options.length < 2) return
-    root.filters = Model.stepFilter(root.filters, which, options, delta)
+    root.filters = Library.stepFilter(root.filters, which, options, delta)
     root.keepSelection(game, 0)
   }
 
@@ -745,7 +851,7 @@ Item {
   // the order moves it; the launcher writes it down.
   function toggleFavourite() {
     var game = root.selected
-    var args = Model.favouriteArgs(game)
+    var args = Library.favouriteArgs(game)
     if (args.length === 0) return
     var on = args[0] === "--favourite"
     var roms = args.slice(1)
@@ -800,8 +906,8 @@ Item {
     // Any edit re-aims at the best match rather than keeping a tile that the
     // new filter may have pushed somewhere else entirely.
     root.selectedIndex = 0
-    pointerGate.reset()
-    Qt.callLater(function() { grid.positionViewAtIndex(0, GridView.Beginning) })
+    gate.reset()
+    Qt.callLater(function() { wallView.grid.positionViewAtIndex(0, GridView.Beginning) })
   }
 
   // ---------------------------------------------------------------- actions
@@ -830,7 +936,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        root.games = Model.parseList(text)
+        root.games = Library.parseList(text)
         root.loaded = true
         root.selectedIndex = 0
         if (root.pendingSelectRom) {
@@ -862,13 +968,13 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var parsed = Model.parseGame(text)
+        var parsed = Settings.parseGame(text)
         if (parsed.rom === root.gameRom) root.gameParsed = parsed
       }
     }
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text && text.trim()) root.settingsError = text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+      onStreamFinished: if (text && text.trim()) root.settingsError = Library.launcherError(text)
     }
   }
 
@@ -878,10 +984,10 @@ Item {
     property string rom: ""
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text && text.trim()) root.settingsError = text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+      onStreamFinished: if (text && text.trim()) root.settingsError = Library.launcherError(text)
     }
     onExited: function(exitCode) {
-      var effects = Model.gameWriteEffects(gameSetProc.changedKeys)
+      var effects = Settings.gameWriteEffects(gameSetProc.changedKeys)
       gameSetProc.changedKeys = []
       if (exitCode !== 0 && !root.settingsError) root.settingsError = "could not write this game's settings"
       if (root.gameRom === gameSetProc.rom && !gameProc.running) {
@@ -890,7 +996,7 @@ Item {
       }
       if (effects.library) root.refresh()
       if (effects.artwork) root.refreshArt(gameSetProc.rom)
-      if (Model.pendingArgs(root.pendingGame).length) gameWriteTimer.restart()
+      if (Settings.pendingArgs(root.pendingGame).length) gameWriteTimer.restart()
     }
   }
 
@@ -911,7 +1017,7 @@ Item {
         gameSetProc.command = [root.launcher, "--game-image", imageProc.rom, path]
         gameSetProc.running = true
       } else if (imageErr.text && imageErr.text.trim()) {
-        root.settingsError = imageErr.text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+        root.settingsError = Library.launcherError(imageErr.text)
       }
     }
   }
@@ -920,7 +1026,7 @@ Item {
     id: favouriteProc
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: if (text) root.addNote = text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+      onStreamFinished: if (text) root.addNote = Library.launcherError(text)
     }
     // The file is the truth: if it could not be written, the wall goes back
     // to what it says.
@@ -938,7 +1044,7 @@ Item {
     onRunningChanged: if (running) progressed = false
     stdout: SplitParser {
       onRead: function(line) {
-        var next = Model.withArt(root.artMap, line)
+        var next = Library.withArt(root.artMap, line)
         if (next) {
           root.artMap = next
           artProc.progressed = true
@@ -962,7 +1068,7 @@ Item {
     command: [root.launcher, "--settings"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.settingsParsed = Model.parseSettings(text)
+      onStreamFinished: root.settingsParsed = Settings.parseSettings(text)
     }
   }
 
@@ -972,13 +1078,13 @@ Item {
     stdout: SplitParser {
       onRead: function(line) {
         root.addOutput += line + "\n"
-        var progress = Model.addProgress(line)
+        var progress = Library.addProgress(line)
         if (progress) root.statusMessage = progress
       }
     }
     onRunningChanged: {
       if (running) return
-      var summary = Model.addSummary(root.addOutput)
+      var summary = Library.addSummary(root.addOutput)
       root.statusMessage = summary.title
       if (!root.addNote) root.addNote = summary.detail
       root.addOk = root.addOk && summary.ok
@@ -1015,7 +1121,7 @@ Item {
       } else if (pickErr.text && pickErr.text.trim()) {
         // No chooser to open: say so where the result would have gone.
         root.statusMessage = "Could not open a file chooser"
-        root.addNote = pickErr.text.trim().split("\n")[0].replace(/^arcade-launcher: /, "")
+        root.addNote = Library.launcherError(pickErr.text)
         root.addOk = false
       }
     }
@@ -1026,7 +1132,7 @@ Item {
     command: [root.launcher, "--controller"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.controllerParsed = Model.parseController(text)
+      onStreamFinished: root.controllerParsed = Pad.parseController(text)
     }
   }
 
@@ -1069,7 +1175,7 @@ Item {
   Timer {
     id: backdropTimer
     interval: 140
-    onTriggered: root.backdrop = Model.artFor(root.artMap, root.selected)
+    onTriggered: root.backdrop = Library.artFor(root.artMap, root.selected)
   }
   onSelectedChanged: backdropTimer.restart()
   onArtMapChanged: if (!root.backdrop) backdropTimer.restart()
@@ -1098,7 +1204,7 @@ Item {
     command: [root.launcher, "--controls"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.controlsParsed = Model.parseControls(text)
+      onStreamFinished: root.controlsParsed = Controls.parseControls(text)
     }
   }
 
@@ -1139,15 +1245,15 @@ Item {
       root.loadSettings()
       var library = false, artwork = false
       for (var i = 0; i < keys.length; i++) {
-        if (Model.affectsLibrary(keys[i])) library = true
-        if (Model.affectsArtwork(keys[i])) artwork = true
+        if (Settings.affectsLibrary(keys[i])) library = true
+        if (Settings.affectsArtwork(keys[i])) artwork = true
       }
       // Artwork policy changed: forget what is known about every tile, or an
       // ARTWORK that just went back on would never ask for anything again.
       if (artwork) root.artMap = ({})
       if (library) root.refresh()
       else if (artwork) root.requestArt()
-      if (Model.pendingArgs(root.pendingSettings).length) writeTimer.restart()
+      if (Settings.pendingArgs(root.pendingSettings).length) writeTimer.restart()
     }
   }
 
@@ -1160,257 +1266,10 @@ Item {
   }
 
   PointerMoveGate {
-    id: pointerGate
+    id: gate
     referenceItem: card
   }
 
-  // ------------------------------------------------------------------ a tile
-  //
-  // One game: its title screen, its name, and a word about it when there is
-  // one worth saying, and a heart when it is a favourite. The Loader that
-  // places one says which game it is.
-  Component {
-    id: gameTile
-
-    Item {
-      id: tile
-      readonly property int index: parent ? parent.tileIndex : -1
-      readonly property var entry: index >= 0 && index < root.rows.length ? root.rows[index] : null
-      readonly property bool active: index === root.selectedIndex
-      readonly property string art: Model.artFor(root.artMap, entry)
-      readonly property bool pending: Model.artPending(root.artMap, entry)
-      readonly property string note: Model.tileNote(entry, root.now, root.sortBy)
-
-      Item {
-        anchors.fill: parent
-        anchors.margins: Math.round(root.tileSpacing / 2)
-
-        // The selected tile lifts out of the wall and glows, the way a lit
-        // cabinet does in a dark arcade; the rest step back a little.
-        scale: tile.active ? 1.05 : 1
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-
-        RectangularShadow {
-          anchors.fill: frame
-          radius: frame.radius
-          blur: Style.space(28)
-          spread: Style.space(2)
-          color: Util.alpha(root.accent, 0.55)
-          opacity: tile.active ? 1 : 0
-          Behavior on opacity { NumberAnimation { duration: 140 } }
-        }
-
-        Rectangle {
-          id: frame
-          anchors.fill: parent
-          radius: root.cornerRadius
-          color: tile.active ? Util.alpha(root.accent, 0.16) : root.tileSurface
-          border.width: tile.active ? Math.max(2, Style.space(2)) : Math.max(1, Style.space(1))
-          border.color: tile.active ? root.accent : root.tileBorder
-          Behavior on color { ColorAnimation { duration: 140 } }
-          Behavior on border.color { ColorAnimation { duration: 140 } }
-
-          // Inset on three sides only: the caption runs to the tile's bottom
-          // edge, so it centres between the art and the edge rather than
-          // sitting high with the inset stacked under it.
-          Column {
-            anchors.fill: parent
-            anchors.leftMargin: root.tileInset
-            anchors.rightMargin: root.tileInset
-            anchors.topMargin: root.tileInset
-            spacing: 0
-
-            // ---- artwork
-            Rectangle {
-              id: well
-              width: parent.width
-              height: root.artHeight
-              radius: Math.max(2, root.cornerRadius - Style.space(3))
-              color: root.artWell
-              clip: true
-
-              Image {
-                anchors.fill: parent
-                anchors.margins: 1
-                source: tile.art ? "file://" + tile.art
-                  + (tile.entry && root.artRevision[tile.entry.rom] ? "?v=" + root.artRevision[tile.entry.rom] : "") : ""
-                visible: tile.art.length > 0 && status === Image.Ready
-                fillMode: Image.PreserveAspectFit
-                // Arcade art is 224 lines tall. Smoothing it into a 200px
-                // tile turns a title screen into a smear; nearest-neighbour
-                // keeps the pixels it was drawn in.
-                smooth: false
-                mipmap: false
-                asynchronous: true
-                cache: true
-                sourceSize.width: 640
-                opacity: tile.active ? 1 : 0.8
-                Behavior on opacity { NumberAnimation { duration: 140 } }
-              }
-
-              // The game on screen right now, marked on its own art so it is
-              // found at a glance on a wall of title screens.
-              Rectangle {
-                visible: !!(tile.entry && tile.entry.playing)
-                z: 2
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.margins: Style.space(8)
-                height: Style.font.caption + Style.space(8)
-                width: playingText.implicitWidth + Style.space(14)
-                radius: height / 2
-                color: root.accent
-
-                Text {
-                  id: playingText
-                  anchors.centerIn: parent
-                  textFormat: Text.PlainText
-                  text: "PLAYING"
-                  color: root.artWell
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: Style.space(1)
-                }
-              }
-
-              // No artwork, or none yet: the game's initials set like a
-              // marquee, which beats an empty black rectangle.
-              Text {
-                anchors.centerIn: parent
-                visible: tile.art.length === 0
-                textFormat: Text.PlainText
-                text: Model.initials(tile.entry ? tile.entry.title : "")
-                color: Util.alpha(root.foreground, tile.pending ? 0.28 : 0.42)
-                font.family: root.fontFamily
-                font.pixelSize: Math.round(well.height * 0.34)
-                font.letterSpacing: Style.space(2)
-                font.bold: true
-
-                SequentialAnimation on opacity {
-                  running: tile.pending && root.opened
-                  loops: Animation.Infinite
-                  NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutQuad }
-                  NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutQuad }
-                }
-              }
-            }
-
-            // ---- the caption: the name over a word about it, and on the
-            // right a heart, centred on both lines. A favourite's is filled;
-            // the selected or hovered tile shows an outline one, which is
-            // also where a click makes it a favourite.
-            Item {
-              id: caption
-              width: parent.width
-              height: root.captionHeight + root.tileInset
-
-              Column {
-                anchors.left: parent.left
-                anchors.leftMargin: root.captionPadX
-                anchors.right: editBox.visible ? editBox.left : (heartBox.visible ? heartBox.left : parent.right)
-                anchors.rightMargin: editBox.visible || heartBox.visible ? Style.space(4) : root.captionPadX
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: root.captionGap
-
-                Text {
-                  width: parent.width
-                  height: nameMetrics.height
-                  verticalAlignment: Text.AlignVCenter
-                  textFormat: Text.PlainText
-                  text: tile.entry ? tile.entry.title : ""
-                  color: tile.active ? root.accent : root.foreground
-                  opacity: tile.active ? 1 : 0.9
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: tile.active
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  width: parent.width
-                  height: noteMetrics.height
-                  verticalAlignment: Text.AlignVCenter
-                  textFormat: Text.PlainText
-                  text: tile.note || " "
-                  color: tile.entry && tile.entry.playing ? root.accent : root.foreground
-                  opacity: tile.entry && tile.entry.playing ? 0.9 : 0.45
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                }
-              }
-
-              // The way into this game's own settings, on the tile in hand.
-              Item {
-                id: editBox
-                anchors.right: heartBox.visible ? heartBox.left : parent.right
-                anchors.rightMargin: heartBox.visible ? 0 : Style.space(4)
-                anchors.verticalCenter: parent.verticalCenter
-                width: heartBox.width
-                height: width
-                visible: tile.active || tileMouse.containsMouse
-
-                Text {
-                  anchors.centerIn: parent
-                  textFormat: Text.PlainText
-                  text: "󰏫"
-                  color: root.foreground
-                  opacity: 0.45
-                  font.family: root.fontFamily
-                  font.pixelSize: Math.round(heartBox.height * 0.5)
-                }
-              }
-
-              Item {
-                id: heartBox
-                readonly property bool favourite: Model.isFavourite(tile.entry)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(4)
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.round(root.captionHeight * 0.8)
-                height: width
-                visible: favourite || tile.active || tileMouse.containsMouse
-
-                Rectangle {
-                  anchors.fill: parent
-                  radius: width / 2
-                  color: Util.alpha(root.accent, heartBox.favourite ? 0.14 : 0.0)
-                  Behavior on color { ColorAnimation { duration: 140 } }
-                }
-
-                Text {
-                  anchors.centerIn: parent
-                  textFormat: Text.PlainText
-                  text: heartBox.favourite ? "󰋑" : "󰋕"
-                  color: root.accent
-                  opacity: heartBox.favourite ? 1 : 0.45
-                  font.family: root.fontFamily
-                  font.pixelSize: Math.round(heartBox.height * 0.58)
-                }
-              }
-            }
-          }
-        }
-
-        MouseArea {
-          id: tileMouse
-          anchors.fill: parent
-          hoverEnabled: true
-          onEntered: if (pointerGate.moved) root.setSelected(tile.index)
-          onClicked: function(mouse) {
-            root.setSelected(tile.index)
-            // The heart is a button of its own; anywhere else plays.
-            var p = heartBox.mapFromItem(tileMouse, mouse.x, mouse.y)
-            var e = editBox.mapFromItem(tileMouse, mouse.x, mouse.y)
-            if (heartBox.visible && heartBox.contains(p)) root.toggleFavourite()
-            else if (editBox.visible && editBox.contains(e)) root.openGame()
-            else root.activate()
-          }
-        }
-      }
-    }
-  }
 
   // ------------------------------------------------------------------- view
 
@@ -1492,376 +1351,15 @@ Item {
         focus: true
 
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          root.stickLast = false
-          // The test owns the keyboard while it runs: the stick is what is
-          // being tested, and Esc is the way back.
-          if (root.padTesting) {
-            if (event.key === Qt.Key_Escape) root.stopPadTest()
-            event.accepted = true
-            return
-          }
-          if (root.settingsOpen) {
-            event.accepted = root.settingsKey(event)
-            return
-          }
-          // Alt+S for the settings, beside Alt+A for adding games.
-          if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_S) {
-            root.openSettings()
-            event.accepted = true
-            return
-          }
-          // Alt+F makes the selected game a favourite; Alt+O sorts, and
-          // Alt+V, Alt+D, Alt+M filter -- with Shift, the other way round.
-          if ((event.modifiers & Qt.AltModifier) && !root.hasProblem) {
-            var back = (event.modifiers & Qt.ShiftModifier) ? -1 : 1
-            var handled = true
-            if (event.key === Qt.Key_F) root.toggleFavourite()
-            else if (event.key === Qt.Key_O) root.stepSort(back)
-            else if (event.key === Qt.Key_V) root.stepFilter("show", back)
-            else if (event.key === Qt.Key_D) root.stepFilter("decade", back)
-            else if (event.key === Qt.Key_M) root.stepFilter("maker", back)
-            else if (event.key === Qt.Key_0) root.clearFilters()
-            else if (event.key === Qt.Key_E) root.openGame()
-            else handled = false
-            if (handled) { event.accepted = true; return }
-          }
-          // Alt+A adds games: the file chooser.
-          if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
-            root.pickGames()
-            event.accepted = true
-            return
-          }
-          if (event.key === Qt.Key_Escape) {
-            root.close()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.activate()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Right || (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier))) {
-            root.move("right")
-            event.accepted = true
-          } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
-            root.move("left")
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.move("down")
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.move("up")
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.move("page-down")
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.move("page-up")
-            event.accepted = true
-          } else if (event.key === Qt.Key_Home) {
-            root.setSelected(0)
-            event.accepted = true
-          } else if (event.key === Qt.Key_End) {
-            root.setSelected(root.rows.length - 1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-            // Another version of the same game, in the same tile: the wall
-            // does not move, only what Enter will start.
-            if (root.selected && Model.versionCount(root.selected) > 1)
-              root.pickedVersions = Model.stepVersion(root.pickedVersions, root.selected,
-                                                      event.key === Qt.Key_Backtab ? -1 : 1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_F5) {
-            // The config file is as likely to have changed as the ROM
-            // directory, and a hand edit should not need the panel reopened.
-            root.loadSettings()
-            root.refresh()
-            event.accepted = true
-          } else if (Util.editsFilter(event, root.filterText)) {
-            root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if (event.text && event.text.length === 1
-                     && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
-            root.setFilter(root.filterText + event.text)
-            event.accepted = true
-          }
-        }
+        Keys.onPressed: function(event) { root.handleKey(event) }
 
         Column {
           anchors.fill: parent
           spacing: root.contentSpacing
 
-          // ------------------------------------------------------------ header
-          Item {
-            width: parent.width
-            height: root.headerHeight
+          Header { width: parent.width; arcade: root }
 
-            Text {
-              id: wordmark
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              textFormat: Text.PlainText
-              text: root.settingsOpen ? (root.gameRom ? "GAME" : "SETTINGS") : "ARCADE"
-              color: root.accent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: Style.space(3)
-            }
-
-            // The search line is a field rather than loose text: it is the one
-            // thing in the panel you are meant to type into, and it should look
-            // like it before anything is typed.
-            Rectangle {
-              id: searchField
-              visible: !root.settingsOpen
-              anchors.left: wordmark.right
-              anchors.leftMargin: Style.space(16)
-              anchors.right: addButton.left
-              anchors.rightMargin: Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              height: parent.height
-              radius: height / 2
-              color: Util.alpha(root.foreground, 0.06)
-              border.width: Math.max(1, Style.space(1))
-              border.color: root.filterText ? Util.alpha(root.accent, 0.45) : Util.alpha(root.foreground, 0.10)
-              Behavior on border.color { ColorAnimation { duration: 130 } }
-
-              Text {
-                id: searchGlyph
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(14)
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                text: "󰍉"
-                color: root.filterText ? root.accent : root.foreground
-                opacity: root.filterText ? 0.9 : 0.4
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-              }
-
-              Text {
-                id: searchLine
-                textFormat: Text.PlainText
-                anchors.left: searchGlyph.right
-                anchors.leftMargin: Style.space(10)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(14)
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.filterText || "Search games…"
-                color: root.foreground
-                opacity: root.filterText ? 1 : 0.42
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-                elide: Text.ElideRight
-              }
-
-              // A caret, so an empty field still looks like something you type
-              // in rather than a label.
-              Rectangle {
-                anchors.left: searchLine.left
-                anchors.leftMargin: root.filterText ? Math.min(searchLine.contentWidth + Style.space(3), searchLine.width) : 0
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.max(2, Style.space(2))
-                height: Style.font.heading
-                radius: width / 2
-                color: root.accent
-                opacity: caretBlink.on ? 0.9 : 0
-                Behavior on opacity { NumberAnimation { duration: 90 } }
-              }
-            }
-
-            // Which file is being edited, in the search line's place: every row
-            // below is a line in it, and a person who would rather edit it by
-            // hand should be told where it is.
-            Text {
-              id: configPath
-              visible: root.settingsOpen
-              anchors.left: wordmark.right
-              anchors.leftMargin: Style.space(16)
-              anchors.right: gearButton.left
-              anchors.rightMargin: Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              textFormat: Text.PlainText
-              // The file this editor writes: the game's own in the game editor.
-              text: root.gameRom
-                ? Model.shortenPath(root.gameParsed.file, root.home)
-                  + (root.gameParsed.present ? "" : "  ·  made when you change something")
-                : Model.shortenPath(root.settingsParsed.configFile, root.home)
-                  + (root.settingsParsed.configPresent ? "" : "  ·  not created yet")
-              color: root.foreground
-              opacity: 0.45
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideMiddle
-            }
-
-            // Adding games: the file chooser. (Dropping files anywhere on the
-            // panel works too.)
-            Rectangle {
-              id: addButton
-              visible: !root.settingsOpen
-              anchors.right: gearButton.left
-              anchors.rightMargin: Style.space(10)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.height
-              height: parent.height
-              radius: height / 2
-              color: addArea.containsMouse ? Util.alpha(root.accent, 0.16) : Util.alpha(root.foreground, 0.06)
-              Behavior on color { ColorAnimation { duration: 130 } }
-
-              Text {
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: "󰐕"
-                color: addArea.containsMouse ? root.accent : root.foreground
-                opacity: addArea.containsMouse ? 1 : 0.5
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-              }
-
-              MouseArea {
-                id: addArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.pickGames()
-              }
-            }
-
-            // The wall's way in and out of the editor, for the half of the time
-            // a pointer is already in hand.
-            Rectangle {
-              id: gearButton
-              anchors.right: countPill.left
-              anchors.rightMargin: Style.space(10)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.height
-              height: parent.height
-              radius: height / 2
-              color: gearArea.containsMouse || root.settingsOpen
-                ? Util.alpha(root.accent, 0.16) : Util.alpha(root.foreground, 0.06)
-              Behavior on color { ColorAnimation { duration: 130 } }
-
-              Text {
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: root.settingsOpen ? "󰅖" : "󰒓"
-                color: root.settingsOpen || gearArea.containsMouse ? root.accent : root.foreground
-                opacity: root.settingsOpen || gearArea.containsMouse ? 1 : 0.5
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-              }
-
-              MouseArea {
-                id: gearArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.settingsOpen ? root.closeSettings() : root.openSettings()
-              }
-            }
-
-            Rectangle {
-              id: countPill
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              height: Style.font.caption + Style.space(12)
-              width: countText.implicitWidth + Style.space(20)
-              radius: height / 2
-              color: root.hasProblem ? Util.alpha(root.accent, 0.18) : Util.alpha(root.foreground, 0.08)
-
-              Text {
-                id: countText
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: root.settingsOpen ? (root.gameRom ? root.gameTitle + "  ·  Esc goes back" : "Esc goes back")
-                  : (root.loading ? "reading library…"
-                  : (root.hasProblem ? "setup needed" : (root.filterText.trim().length > 0
-                  ? Model.describeCount(root.rows.length, root.games.length)
-                  : Model.describeCount(root.rows.length, root.wallSource.length))))
-                color: root.hasProblem && !root.settingsOpen ? root.accent : root.foreground
-                opacity: root.hasProblem && !root.settingsOpen ? 1 : 0.7
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-          }
-
-          // ----------------------------------------------------------- toolbar
-          // The order and the filters, each a chip showing what it is set to
-          // and the key that steps it. A click steps it on, a right click
-          // back; a filter that is doing something is lit.
-          Row {
-            visible: root.toolbarShown
-            height: visible ? root.toolbarHeight : 0
-            width: parent.width
-            spacing: Style.space(8)
-
-            Repeater {
-              model: [
-                { id: "sort", label: "Sort: " + Model.sortLabel(root.sortBy), key: "O", lit: false },
-                { id: "show", label: Model.showLabel(root.filters.show), key: "V", lit: root.filters.show !== "all" },
-                { id: "decade", label: root.filters.decade || "Any decade", key: "D", lit: !!root.filters.decade,
-                  hidden: root.decadeChoices.length < 2 },
-                { id: "maker", label: root.filters.maker || "Any maker", key: "M", lit: !!root.filters.maker,
-                  hidden: root.makerChoices.length < 2 },
-                { id: "clear", label: "Clear filters", key: "0", lit: false,
-                  hidden: !Model.filtersActive(root.filters) }
-              ]
-
-              Rectangle {
-                id: chip
-                required property var modelData
-                visible: !modelData.hidden
-                height: root.toolbarHeight
-                width: visible ? chipRow.implicitWidth + Style.space(20) : 0
-                radius: height / 2
-                color: modelData.lit ? Util.alpha(root.accent, 0.18)
-                  : (chipArea.containsMouse ? Util.alpha(root.foreground, 0.10) : Util.alpha(root.foreground, 0.05))
-                border.width: Math.max(1, Style.space(1))
-                border.color: modelData.lit ? Util.alpha(root.accent, 0.6) : Util.alpha(root.foreground, 0.12)
-                Behavior on color { ColorAnimation { duration: 130 } }
-
-                Row {
-                  id: chipRow
-                  anchors.centerIn: parent
-                  spacing: Style.space(8)
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: chip.modelData.label
-                    color: chip.modelData.lit ? root.accent : root.foreground
-                    opacity: chip.modelData.lit ? 1 : 0.75
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: "Alt+" + chip.modelData.key
-                    color: root.foreground
-                    opacity: 0.35
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-
-                MouseArea {
-                  id: chipArea
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  acceptedButtons: Qt.LeftButton | Qt.RightButton
-                  onClicked: function(mouse) {
-                    var delta = mouse.button === Qt.RightButton ? -1 : 1
-                    var id = chip.modelData.id
-                    if (id === "sort") root.stepSort(delta)
-                    else if (id === "clear") root.clearFilters()
-                    else root.stepFilter(id, delta)
-                    keyCatcher.forceActiveFocus()
-                  }
-                }
-              }
-            }
-          }
+          Toolbar { width: parent.width; arcade: root }
 
           // -------------------------------------------------------------- body
           Item {
@@ -1869,585 +1367,13 @@ Item {
             height: parent.height - root.headerHeight - root.footerHeight - root.contentSpacing * 2
               - (root.toolbarShown ? root.toolbarHeight + root.contentSpacing : 0)
 
-            // The wall: the whole library, in the order the Sort chip says,
-            // narrowed by the filters beside it.
-            Item {
-              id: wall
-              anchors.fill: parent
-              visible: !root.settingsOpen && !root.hasProblem && root.rows.length > 0
-
-              GridView {
-                id: grid
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: parent.width
-                model: root.rows.length
-                cellWidth: root.cellWidth
-                cellHeight: root.cellHeight
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                cacheBuffer: root.cellHeight * 3
-                delegate: Loader {
-                  required property int index
-                  readonly property int tileIndex: index
-                  width: grid.cellWidth
-                  height: grid.cellHeight
-                  z: tileIndex === root.selectedIndex ? 2 : 1
-                  sourceComponent: gameTile
-                }
-              }
-
-              // A slim indicator instead of a scrollbar: the wall scrolls with
-              // the selection, so this is a hint about how much library is
-              // left, not something to drag.
-              Rectangle {
-                visible: grid.contentHeight > grid.height
-                width: Math.max(2, Style.space(3))
-                radius: width / 2
-                color: Util.alpha(root.foreground, 0.18)
-                anchors.right: parent.right
-                y: grid.y + grid.visibleArea.yPosition * grid.height
-                height: Math.max(Style.space(24), grid.visibleArea.heightRatio * grid.height)
-                Behavior on y { NumberAnimation { duration: 90 } }
-              }
-
-              // The wall fades out into the info bar rather than being sliced
-              // off by it, which is the only cue that there is more below.
-              Rectangle {
-                visible: grid.contentHeight > grid.height
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: Style.space(56)
-                gradient: Gradient {
-                  GradientStop { position: 0.0; color: "transparent" }
-                  GradientStop { position: 1.0; color: root.cardColor }
-                }
-              }
-            }
-
-            // Nothing matched what was typed.
-            Column {
-              anchors.centerIn: parent
-              visible: !root.settingsOpen && !root.hasProblem && root.loaded && root.rows.length === 0
-              spacing: Style.space(6)
-
-              Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                textFormat: Text.PlainText
-                text: root.games.length === 0 ? "No ROMs found"
-                  : (root.searching ? "Nothing matches “" + root.filterText + "”" : Model.emptyNote(root.filters))
-                color: root.foreground
-                opacity: 0.65
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-              }
-
-              Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                textFormat: Text.PlainText
-                text: root.games.length === 0 ? "Press + (Alt+A) to add romsets, or drop them here"
-                  : (Model.filtersActive(root.filters) ? (root.searching ? "Backspace to widen the search · " : "")
-                     + "Alt+0 clears the filters" : "Backspace to widen the search")
-                color: root.foreground
-                opacity: 0.4
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-
-            // Or the launcher could not get as far as a list.
-            Flickable {
-              anchors.fill: parent
-              visible: !root.settingsOpen && root.hasProblem
-              contentHeight: problemText.implicitHeight
-              clip: true
-              boundsBehavior: Flickable.StopAtBounds
-
-              Text {
-                id: problemText
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.problemReport
-                color: root.foreground
-                wrapMode: Text.WordWrap
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-
-            // ------------------------------------------------- the stick test
-            //
-            // Every press on the stick, read as RetroArch will read it: the big
-            // line says what the last button does in a game, and the board
-            // below lights each cabinet control while it is held -- so a
-            // button that lights nothing, or the wrong thing, shows at once.
-            Item {
-              id: padBoard
-              visible: root.settingsOpen && root.padTesting
-              anchors.top: parent.top
-              anchors.bottom: parent.bottom
-              anchors.horizontalCenter: parent.horizontalCenter
-              width: Math.min(parent.width, Style.space(900))
-
-              Column {
-                id: padHeadline
-                anchors.top: parent.top
-                anchors.topMargin: Style.space(24)
-                width: parent.width
-                spacing: Style.space(8)
-
-                Text {
-                  width: parent.width
-                  horizontalAlignment: Text.AlignHCenter
-                  textFormat: Text.PlainText
-                  text: root.padState.last
-                    ? root.padState.last.label + "  →  " + root.padState.last.meaning
-                    : "Press a button on the stick"
-                  color: root.padState.last && !root.padState.last.ok ? root.accent : root.foreground
-                  opacity: root.padState.last ? 1 : 0.6
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.title
-                  font.bold: !!root.padState.last
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  width: parent.width
-                  horizontalAlignment: Text.AlignHCenter
-                  textFormat: Text.PlainText
-                  text: root.padState.last
-                    ? (root.padState.last.note || " ")
-                    : (root.controllerParsed.profile ? "Read as " + root.controllerParsed.profile.name
-                       + ", the way RetroArch will read it in a game." : " ")
-                  color: root.foreground
-                  opacity: 0.5
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  elide: Text.ElideRight
-                }
-              }
-
-              Grid {
-                id: padGrid
-                anchors.top: padHeadline.bottom
-                anchors.topMargin: Style.space(28)
-                anchors.horizontalCenter: parent.horizontalCenter
-                columns: 6
-                spacing: Style.space(10)
-                readonly property int cell: Math.floor((padBoard.width - spacing * 5) / 6)
-
-                Repeater {
-                  model: Model.testControls()
-
-                  Rectangle {
-                    required property string modelData
-                    readonly property bool lit: Model.controlHeld(root.padState, modelData)
-                    readonly property string stick: Model.controlPadLabel(root.controllerParsed, modelData)
-                    width: padGrid.cell
-                    height: Math.round(padGrid.cell * 0.62)
-                    radius: root.cornerRadius
-                    color: lit ? root.accent : root.tileSurface
-                    border.width: Math.max(1, Style.space(1))
-                    border.color: lit ? root.accent : (stick ? root.tileBorder : Util.alpha(root.accent, 0.5))
-                    Behavior on color { ColorAnimation { duration: 60 } }
-
-                    Column {
-                      anchors.centerIn: parent
-                      spacing: Style.space(4)
-
-                      Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        textFormat: Text.PlainText
-                        text: Model.controlName(modelData)
-                        color: lit ? root.background : root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.body
-                        font.bold: true
-                      }
-                      Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        textFormat: Text.PlainText
-                        text: stick || "not on the stick"
-                        color: lit ? root.background : (stick ? root.foreground : root.accent)
-                        opacity: lit ? 0.85 : 0.55
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                      }
-                    }
-                  }
-                }
-              }
-            }
-
-            // ---------------------------------------------------- the editor
-            //
-            // One row per key in arcade.conf. A row shows what is in effect and
-            // where it came from, so a value nobody chose reads as a default
-            // rather than as a setting, and Delete puts a chosen one back.
-            ListView {
-              id: settingsList
-              // A column of label-and-value reads badly across a panel this
-              // wide: the value ends up an arm's length from its name. The
-              // wall gets the whole card, the editor takes a page width.
-              anchors.top: parent.top
-              anchors.bottom: parent.bottom
-              anchors.horizontalCenter: parent.horizontalCenter
-              width: Math.min(parent.width, Style.space(900))
-              visible: root.settingsOpen && !root.padTesting
-              model: root.settingsRows.length
-              clip: true
-              boundsBehavior: Flickable.StopAtBounds
-              spacing: Style.space(2)
-
-              delegate: Column {
-                id: settingRow
-                required property int index
-                readonly property var entry: root.settingsRows[index]
-                readonly property bool active: index === root.settingsIndex
-                readonly property bool editingThis: index === root.editingIndex
-                readonly property bool capturingThis: index === root.capturingIndex
-                readonly property bool newGroup: index === 0
-                  || root.settingsRows[index - 1].group !== entry.group
-
-                width: settingsList.width
-                spacing: Style.space(4)
-
-                Item {
-                  width: parent.width
-                  height: settingRow.newGroup ? Style.font.caption + Style.space(16) : 0
-                  visible: settingRow.newGroup
-
-                  Text {
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: Style.space(3)
-                    textFormat: Text.PlainText
-                    text: settingRow.entry ? String(settingRow.entry.group).toUpperCase() : ""
-                    color: root.foreground
-                    opacity: 0.35
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.bold: true
-                    font.letterSpacing: Style.space(2)
-                  }
-                }
-
-                Rectangle {
-                  width: parent.width
-                  height: Math.max(Style.space(42), Style.font.body + Style.space(20))
-                  radius: root.cornerRadius
-                  color: settingRow.active ? Util.alpha(root.accent, 0.12) : "transparent"
-                  border.width: settingRow.active ? Math.max(1, Style.space(1)) : 0
-                  border.color: Util.alpha(root.accent, 0.45)
-                  Behavior on color { ColorAnimation { duration: 120 } }
-
-                  // A settings row is a claim about what the panel does, so the
-                  // one thing it must never hide is that a value is merely the
-                  // default. The dot marks the rows that are the user's own.
-                  Rectangle {
-                    id: overrideDot
-                    anchors.left: parent.left
-                    anchors.leftMargin: Style.space(10)
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(4, Style.space(6))
-                    height: width
-                    radius: width / 2
-                    color: root.accent
-                    opacity: Model.isOverridden(settingRow.entry) ? 0.9 : 0
-                  }
-
-                  Text {
-                    id: settingLabel
-                    anchors.left: overrideDot.right
-                    anchors.leftMargin: Style.space(10)
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Math.round(parent.width * 0.32)
-                    textFormat: Text.PlainText
-                    text: settingRow.entry ? settingRow.entry.label : ""
-                    color: settingRow.active ? root.accent : root.foreground
-                    opacity: settingRow.active ? 1 : 0.85
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    elide: Text.ElideRight
-                  }
-
-                  // The value, or the buffer being typed into it. Editing is
-                  // drawn rather than focused: the overlay owns the keyboard
-                  // exclusively, so a real text field would have to take it
-                  // back from the panel and hand it over again.
-                  Text {
-                    id: settingValue
-                    anchors.left: settingLabel.right
-                    anchors.leftMargin: Style.space(12)
-                    anchors.right: stepHint.left
-                    anchors.rightMargin: Style.space(6)
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: settingRow.capturingThis
-                      ? "press a key…"
-                      : (settingRow.editingThis
-                         ? root.editText
-                         : (settingRow.entry && (settingRow.entry.kind === "bind" || settingRow.entry.layout)
-                            ? Model.controlDisplay(settingRow.entry)
-                              + (settingRow.entry.kind === "bind" && Model.controlPadLabel(root.controllerParsed, settingRow.entry.id)
-                                 ? "   ·   stick: " + Model.controlPadLabel(root.controllerParsed, settingRow.entry.id) : "")
-                            : Model.displayValue(settingRow.entry, root.home)
-                              + (settingRow.entry && settingRow.entry.unit && settingRow.entry.value
-                                 ? " " + settingRow.entry.unit : "")))
-                    color: settingRow.capturingThis
-                      || (!settingRow.editingThis && settingRow.entry && settingRow.entry.state === "missing")
-                      ? root.accent : root.foreground
-                    opacity: settingRow.capturingThis || settingRow.editingThis
-                      || Model.isOverridden(settingRow.entry) ? 1 : 0.55
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    elide: settingRow.editingThis ? Text.ElideLeft : Text.ElideMiddle
-                  }
-
-                  Rectangle {
-                    id: settingCaret
-                    visible: settingRow.editingThis && !settingRow.capturingThis
-                    anchors.left: settingValue.left
-                    anchors.leftMargin: Math.min(settingValue.contentWidth + Style.space(3), settingValue.width)
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(2, Style.space(2))
-                    height: Style.font.body
-                    radius: width / 2
-                    color: root.accent
-                    opacity: caretBlink.on ? 0.9 : 0
-                  }
-
-                  // Arrow keys change a choice or a number in place; only the
-                  // typed rows need Enter, so only they are told about it.
-                  Text {
-                    id: stepHint
-                    anchors.right: parent.right
-                    anchors.rightMargin: Style.space(12)
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    visible: settingRow.active && !settingRow.editingThis
-                    text: settingRow.entry && settingRow.entry.kind === "bind"
-                      ? "Enter to bind"
-                      : settingRow.entry && settingRow.entry.kind === "padtest"
-                      ? "Enter to start"
-                      : settingRow.entry && settingRow.entry.kind === "padinfo"
-                      ? "F5 re-checks"
-                      : (settingRow.entry && (settingRow.entry.kind === "choice" || settingRow.entry.kind === "number")
-                         ? "← →" : (settingRow.entry && settingRow.entry.kind === "image" ? "Enter to choose" : "Enter to edit"))
-                    color: root.foreground
-                    opacity: 0.35
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  MouseArea {
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onEntered: if (pointerGate.moved && !root.editing) root.settingsIndex = settingRow.index
-                    onClicked: {
-                      if (root.editing && !settingRow.editingThis) root.cancelEdit()
-                      root.settingsIndex = settingRow.index
-                      if (settingRow.entry && settingRow.entry.kind === "choice") root.stepSetting(1)
-                      else if (settingRow.entry && settingRow.entry.kind === "bind") root.beginCapture()
-                      else if (settingRow.entry && settingRow.entry.kind === "padtest") root.startPadTest()
-                      else if (settingRow.entry && settingRow.entry.kind === "padinfo") {}
-                      else if (!settingRow.editingThis) root.beginEdit()
-                    }
-                  }
-                }
-              }
-            }
+            Wall { id: wallView; arcade: root }
+            PadTest { arcade: root }
+            SettingsList { id: settingsView; arcade: root }
           }
 
           // ------------------------------------------------------------ footer
-          Item {
-            width: parent.width
-            height: root.footerHeight
-
-            Rectangle {
-              anchors.top: parent.top
-              width: parent.width
-              height: 1
-              color: Util.alpha(root.foreground, 0.10)
-            }
-
-            // ---- the info bar
-            Column {
-              id: infoText
-              visible: root.infoBarShown
-              anchors.left: parent.left
-              anchors.right: keycaps.left
-              anchors.rightMargin: Style.space(20)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(4)
-
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.statusMessage || (root.selected ? root.selected.title : "")
-                color: root.statusMessage ? root.accent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Math.round(Style.font.title * 1.5)
-                font.bold: true
-                elide: Text.ElideRight
-              }
-
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.addNote || root.launchNote || Model.gameFacts(root.selected, root.now)
-                color: (root.addNote && !root.addOk) || root.launchNote ? root.accent : root.foreground
-                opacity: (root.addNote && !root.addOk) || root.launchNote ? 1 : 0.55
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-              }
-            }
-
-            Row {
-              id: keycaps
-              visible: root.infoBarShown
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(18)
-
-              Repeater {
-                model: Model.wallHints(root.stickLast && !!root.controllerParsed.pad,
-                                       Model.versionCount(root.selected) > 1,
-                                       root.selected ? { on: Model.isFavourite(root.selected),
-                                                         stickKey: Model.favouriteStickKey(root.controllerParsed) } : null)
-
-                Row {
-                  required property var modelData
-                  spacing: Style.space(6)
-
-                  Repeater {
-                    model: modelData.keys
-
-                    Rectangle {
-                      required property string modelData
-                      anchors.verticalCenter: parent.verticalCenter
-                      height: Style.font.caption + Style.space(10)
-                      width: Math.max(height, capText.implicitWidth + Style.space(12))
-                      radius: Math.max(3, root.cornerRadius / 2)
-                      color: Util.alpha(root.foreground, 0.07)
-                      border.width: Math.max(1, Style.space(1))
-                      border.color: Util.alpha(root.foreground, 0.22)
-
-                      Text {
-                        id: capText
-                        anchors.centerIn: parent
-                        textFormat: Text.PlainText
-                        text: modelData
-                        color: root.foreground
-                        opacity: 0.85
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        font.bold: true
-                      }
-                    }
-                  }
-
-                  Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: modelData.label
-                    color: root.foreground
-                    opacity: 0.55
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-              }
-            }
-
-            // ---- the plain footer: settings, the stick test, setup problems
-            Column {
-              visible: !root.infoBarShown
-              anchors.left: parent.left
-              anchors.right: hintText.left
-              anchors.rightMargin: Style.space(16)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.padTesting
-                  ? "Controller test" + (root.controllerParsed.pad ? " · " + root.controllerParsed.pad.name : "")
-                  : root.settingsOpen
-                  ? (root.settingsRow ? root.settingsRow.label : "Settings")
-                  : (root.statusMessage
-                     || (root.selected ? root.selected.title : (root.hasProblem ? "Setup needed" : "")))
-                color: root.statusMessage && !root.settingsOpen ? root.accent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.heading
-                elide: Text.ElideRight
-              }
-
-              // Under the name: what the setting does and where its value came
-              // from, or the problem with what was just typed.
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.padTesting
-                  ? Model.controllerStatus(root.controllerParsed).text
-                  : root.settingsOpen
-                  ? (root.settingsError
-                     || (root.capturing ? "press the key for this control — Esc cancels" : "")
-                     || Model.describeState(root.settingsRow)
-                     || (root.settingsRow
-                         ? [root.settingsRow.help || "", Model.describeSource(root.settingsRow)]
-                             .filter(function(part) { return part.length > 0 }).join("  ·  ")
-                         : ""))
-                  : (root.selected
-                     ? root.selected.rom + "  ·  "
-                       + (root.launchNote || Model.versionNote(root.selected)
-                          || Model.shortenPath(root.selected.path, root.home))
-                     : "")
-                color: (root.settingsOpen
-                        && (root.settingsError || root.capturing || Model.describeState(root.settingsRow)))
-                  || (!root.settingsOpen && root.launchNote)
-                  ? root.accent : root.foreground
-                opacity: (root.settingsOpen
-                          && (root.settingsError || root.capturing || Model.describeState(root.settingsRow)))
-                  || (!root.settingsOpen && root.launchNote)
-                  ? 1 : 0.45
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideMiddle
-              }
-            }
-
-            Text {
-              id: hintText
-              visible: !root.infoBarShown
-              textFormat: Text.PlainText
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              width: Math.min(implicitWidth, parent.width * 0.42)
-              horizontalAlignment: Text.AlignRight
-              text: root.padTesting
-                ? "press buttons on the stick\nEsc or hold Home ends the test"
-                : root.stickLast && root.controllerParsed.pad && !root.editing && !root.capturing
-                ? Model.stickHint(root.stickView)
-                : root.settingsOpen
-                ? (root.capturing
-                   ? "press a key · Esc cancels"
-                   : (root.editing
-                      ? "Enter saves · Esc cancels"
-                      : "←→ changes · Enter edits\nDel resets · Esc goes back"))
-                : (root.hasProblem
-                   ? "Enter re-checks · Alt+S settings · Esc closes"
-                   : "Enter plays · ←↑↓→ selects\nAlt+S settings · F5 rescans · Esc closes")
-              color: root.foreground
-              opacity: 0.4
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              lineHeight: 1.25
-            }
-          }
+          Footer { width: parent.width; arcade: root }
         }
       }
     }
@@ -2506,7 +1432,7 @@ Item {
         root.dropHover = false
         if (!drop.hasUrls) return
         drop.accept(Qt.CopyAction)
-        root.addGames(Model.droppedPaths(drop.urls))
+        root.addGames(Library.droppedPaths(drop.urls))
       }
     }
 

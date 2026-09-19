@@ -619,8 +619,18 @@ launcher in `flock` — the first firing owns the menu, the rest are no-ops.
 ## Files
 
 ```
-Arcade.qml                     the overlay
-Model.js                       parsing, matching, formatting - all of it tested
+Arcade.qml                     the overlay: its state, keys and the launcher processes
+GameTile.qml                   one game on the wall
+Header.qml                     wordmark, search line, add / settings / count
+Toolbar.qml                    the sort and filter chips
+Wall.qml                       the grid of games, the empty note, a setup problem
+SettingsList.qml               the editor rows, for the arcade and for one game
+PadTest.qml                    the stick test
+Footer.qml                     the info bar and keycaps, or the plain hints
+Library.js                     parsing, versions, sorting, filters, search, formatting
+Settings.js                    the arcade's settings and a game's own, as editor rows
+Controls.js                    key names and the cabinet control rows
+Pad.js                         the stick: its profile, its presses, what they do
 test.js                        node test.js
 test-launcher.sh               ./test-launcher.sh - the config and bind writers, in bash
 manifest.json                  plugin manifest

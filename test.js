@@ -1,27 +1,34 @@
 #!/usr/bin/env node
-// Model.js unit tests.
+// Unit tests for the panel's logic: Library.js, Controls.js, Settings.js, Pad.js.
 //
 //     node test.js        # prints every failure, exits 1 if any
 //
-// Model.js owns the parsing and the match ranking -- the parts that decide
+// Library.js owns the parsing and the match ranking -- the parts that decide
 // which ROM Enter launches. Getting that wrong starts the wrong game, so it is
 // checked here rather than by playing.
 //
-// Model.js is loaded by evaluating it, minus the QML `.pragma library` line
-// that node cannot parse, and re-exporting whatever it declares.
-
+// The modules are loaded by evaluating them, minus the QML `.pragma library`
+// and `.import` lines node cannot parse, with each one's imports handed in as
+// the module objects already loaded. Every check sees them merged into one M.
 const fs = require("fs")
 const path = require("path")
 
-function loadModel() {
-  const src = fs.readFileSync(path.join(__dirname, "Model.js"), "utf8")
-    .replace(/^\s*\.pragma\s+library\s*$/m, "")
-  const names = []
-  for (const m of src.matchAll(/^(?:function|var)\s+([A-Za-z_$][\w$]*)/gm)) names.push(m[1])
-  return new Function(src + "\nreturn {" + names.join(", ") + "}")()
+const MODULES = ["Library", "Controls", "Settings", "Pad"]
+
+function loadModules() {
+  const loaded = {}
+  for (const name of MODULES) {
+    const raw = fs.readFileSync(path.join(__dirname, name + ".js"), "utf8")
+    const imports = [...raw.matchAll(/^\s*\.import\s+"(\w+)\.js"\s+as\s+(\w+)\s*$/gm)].map((m) => m[2])
+    const src = raw.replace(/^\s*\.(pragma|import)\b.*$/gm, "")
+    const names = []
+    for (const m of src.matchAll(/^(?:function|var)\s+([A-Za-z_$][\w$]*)/gm)) names.push(m[1])
+    loaded[name] = new Function(...imports, src + "\nreturn {" + names.join(", ") + "}")(...imports.map((i) => loaded[i]))
+  }
+  return Object.assign({}, ...MODULES.map((n) => loaded[n]))
 }
 
-const M = loadModel()
+const M = loadModules()
 const HOME = "/home/kimm"
 let checks = 0
 const failures = []
@@ -186,6 +193,10 @@ check("and one to unfavourite, on the stick",
       ["B Play", "ZR Unfavourite", "− Settings", "Home Close"])
 check("stick hints, with versions", M.wallHints(true, true).map((h) => h.keys.join("+") + " " + h.label),
       ["B Play", "Y+X Version", "− Settings", "Home Close"])
+
+check("a launcher error is its first line, unprefixed",
+      M.launcherError("arcade-launcher: no such file: /x\nmore detail\n"), "no such file: /x")
+check("nothing said is nothing", M.launcherError(undefined), "")
 
 // -------------------------------------------------------------- one game
 
