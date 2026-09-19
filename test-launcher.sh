@@ -76,6 +76,7 @@ chmod +x "$sandbox/bin/"*
 : >"$XDG_CONFIG_HOME/retroarch/cores/fbneo_libretro.so"
 export PATH="$sandbox/bin:$PATH"
 export ARCADE_TEST_ARGS="$sandbox/args"
+export ARCADE_RA_PORT=55399
 
 conf="$XDG_CONFIG_HOME/omarchy/arcade.conf"
 profile="$XDG_CONFIG_HOME/omarchy/arcade-retroarch.cfg"
@@ -253,6 +254,13 @@ check "a title of its own" "$(game bublbobl TITLE)" "Bubble Bobble (my way)|game
 check "is the title the wall shows" "$("$launcher" --list | awk -F'\t' '$2 ~ /bublbobl/ { print $1 }')" "Bubble Bobble (my way)"
 "$launcher" --game-set bublbobl TITLE=
 check "an empty title gives the database's back" "$(game bublbobl TITLE)" "Bubble Bobble|default"
+
+"$launcher" --game-set bublbobl CONTINUE=on
+check "continuing where you left off is RetroArch's own save state" \
+  "$(grep -c '^savestate_auto_save = "true"$\|^savestate_auto_load = "true"$' "$gcfg")" "2"
+check "and reads back" "$(game bublbobl CONTINUE)" "on|game"
+"$launcher" --game-set bublbobl CONTINUE=
+check "turning it back gives RetroArch its way" "$(grep -c savestate "$gcfg")" "0"
 
 "$launcher" --game-set bublbobl SMOOTH=smooth ASPECT=4:3 INTEGER=on ROTATE=90
 check "picture settings read back" \
@@ -446,6 +454,36 @@ check "and the game is running" "$(games_running)" "1"
 first="$(running_pid)"
 check "under the pid the launcher wrote down" "$(kill -0 "$first" 2>/dev/null && echo alive)" "alive"
 check "the play is remembered" "$(grep -c "good.zip" "$history")" "1"
+# ---- pausing it while the panel is up
+#
+# RetroArch listens for commands on a UDP port; this stands in for it, writing
+# down what it is told and answering GET_STATUS.
+cat >"$sandbox/bin/fakeport" <<'PORT'
+#!/usr/bin/env python3
+import socket, sys
+port, log = int(sys.argv[1]), sys.argv[2]
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("127.0.0.1", port))
+while True:
+    data, who = sock.recvfrom(4096)
+    command = data.decode(errors="replace").strip()
+    with open(log, "a") as fh:
+        fh.write(command + "\n")
+    if command == "GET_STATUS":
+        sock.sendto(b"GET_STATUS PLAYING fb_alpha,good,crc32=0", who)
+PORT
+chmod +x "$sandbox/bin/fakeport"
+commands="$sandbox/ra-commands"
+"$sandbox/bin/fakeport" "$ARCADE_RA_PORT" "$commands" &
+port_pid=$!
+sleep 0.5
+check "the running game says what it is doing" "$("$launcher" --playing)" "playing"
+"$launcher" --pause
+check "pausing tells RetroArch to" "$(grep -c '^PAUSE_TOGGLE$' "$commands")" "1"
+"$launcher" --resume
+check "and one already playing is left as it is" "$(grep -c '^PAUSE_TOGGLE$' "$commands")" "1"
+kill $port_pid 2>/dev/null
+
 check "the arcade's base, then the binds, then the game's own settings" \
   "$(grep -v -- '--max-frames' "$ARCADE_TEST_ARGS" | grep -c -- '--appendconfig [^ ]*/omarchy-arcade-base.cfg|[^ ]*arcade-retroarch.cfg|[^ ]*/arcade-games/good.cfg')" "1"
 check "the base keeps RetroArch's crash-prone desktop window from being built" \

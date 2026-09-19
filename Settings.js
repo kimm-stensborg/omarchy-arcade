@@ -322,6 +322,10 @@ function gameSchema() {
   return [
     { key: "TITLE", label: "Name", kind: "text", group: "Game",
       help: "The name on the wall and in search. Empty goes back to the database's." },
+    { key: "CONTINUE", label: "Continue where you left off", kind: "choice", group: "Game",
+      options: ["", "on", "off"],
+      labels: { "": "as RetroArch", on: "on", off: "off" },
+      help: "The game's state is saved as it closes and picked up again the next time you play it." },
     { key: "ART", label: "Artwork", kind: "choice", group: "Artwork",
       options: ["", "titles", "snaps", "boxarts"],
       labels: { "": "as the arcade", titles: "title screen", snaps: "in-game", boxarts: "box art", custom: "your own picture" },

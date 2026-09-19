@@ -18,6 +18,8 @@
 - **Add games** from a file chooser or by dropping romsets on the panel; each is test-played first
 - **Check the library** to mark games that won't start, with the reason
 - **Attract mode** cycles title screens when the panel is left alone
+- **The game waits** while the arcade is open, and `Enter` puts you back in it
+- **Continue where you left off:** per game, RetroArch saves its state as it closes and picks it up next time
 - **Stick support:** Home opens the arcade and returns from a game
 
 ## Install
@@ -101,7 +103,7 @@ Any controller RetroArch has a profile for works. **Settings › Test the stick*
 
 **Controls:** pick MAME standard (coin `5`, start `1`, `Ctrl` `Alt` `Space`...) or RetroArch's layout, or bind each control by pressing the key.
 
-**A game's own settings** (`Alt+E`) are saved in `~/.config/omarchy/arcade-games/<rom>.cfg` and apply to that game only.
+**A game's own settings** (`Alt+E`) — name, continue, artwork, picture, controls — are saved in `~/.config/omarchy/arcade-games/<rom>.cfg` and apply to that game only.
 
 ## Command line
 
@@ -110,6 +112,7 @@ arcade-launcher bublbobl            # play a game
 arcade-launcher --list [--all]      # your games [and every FBNeo game]
 arcade-launcher --add pang.zip      # add a romset
 arcade-launcher --check             # find games that won't start
+arcade-launcher --playing           # "playing" or "paused"
 arcade-launcher --favourite galaga  # favourite a game
 arcade-launcher --game-set sf2 SHADER=crt/crt-royale.slangp
 arcade-launcher --doctor            # check the setup

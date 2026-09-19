@@ -135,7 +135,7 @@ Item {
   readonly property bool infoBarShown: !root.settingsOpen && !root.padTesting && !root.hasProblem
     && root.rows.length > 0
   // Said in the footer before Enter is pressed, when a game is already running.
-  readonly property string launchNote: Present.launchNote(root.selected, root.playing)
+  readonly property string launchNote: Present.launchNote(root.selected, root.playing, root.gamePaused)
 
   // Theme: shares the [menu] surface tokens, so a theme that styles the
   // Omarchy menu styles this panel too.
@@ -184,6 +184,22 @@ Item {
   // The game as the wall has it, for what the editor can say about it (its
   // screen standing on its side, say).
   property var gameEntry: null
+
+  // ---- the game underneath
+  // The panel sits on top of a game it started, and RetroArch holds the game
+  // still while something else has the screen (pause_nonactive, which the
+  // arcade turns on for its games). The panel asks how the game is doing, so
+  // its tile can say so; going back to it, or closing the panel, sets it off
+  // again.
+  property bool gamePaused: false
+  property int stateRetries: 0
+
+  // RetroArch takes a moment to notice it has lost the screen, so the answer
+  // is asked for again a few times.
+  function askGameState(tries) {
+    root.stateRetries = tries
+    if (!stateProc.running) stateProc.running = true
+  }
 
   // ---- attract mode
   // Left alone on the wall, the panel shows the games' title screens one after
@@ -299,6 +315,7 @@ Item {
 
     root.opened = true
     root.attract = false
+    root.askGameState(5)
     root.now = Date.now() / 1000
     root.pickedVersions = ({})
     root.checkResult = ""
@@ -317,6 +334,8 @@ Item {
 
   function close() {
     root.attract = false
+    if (root.gamePaused) { root.gamePaused = false; resumeProc.running = true }
+    root.stateRetries = 0
     root.stopPadTest()
     root.stopStickRepeat()
     root.flushSettings()
@@ -891,6 +910,9 @@ Item {
 
   function launch(game) {
     if (!game) return
+    // The launcher lets the game go again when it brings it back, and closes
+    // it when another game is picked.
+    root.gamePaused = false
     launchProc.command = [root.launcher, game.path]
     launchProc.running = true
     root.statusMessage = (game.playing ? "Back to " : "Starting ") + game.title + "…"
@@ -1032,6 +1054,34 @@ Item {
         root.settingsError = Present.launcherError(imageErr.text)
       }
     }
+  }
+
+  // How the game underneath is doing: "paused" while the panel has the
+  // screen, "playing" once it gives it back.
+  Process {
+    id: stateProc
+    command: [root.launcher, "--playing"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.gamePaused = text.trim() === "paused"
+        if (root.opened && !root.gamePaused && root.stateRetries > 0) {
+          root.stateRetries = root.stateRetries - 1
+          stateRetry.restart()
+        }
+      }
+    }
+  }
+
+  Timer {
+    id: stateRetry
+    interval: 350
+    onTriggered: if (root.opened && !stateProc.running) stateProc.running = true
+  }
+
+  Process {
+    id: resumeProc
+    command: [root.launcher, "--resume"]
   }
 
   Process {

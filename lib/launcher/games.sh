@@ -46,7 +46,10 @@ arcade_base_lines() {
   printf '%s\n' \
     '# Written by arcade-launcher at each launch; loaded under every arcade game.' \
     'config_save_on_exit = "false"' \
-    'desktop_menu_enable = "false"'
+    'desktop_menu_enable = "false"' \
+    'network_cmd_enable = "true"' \
+    'pause_nonactive = "true"' \
+    "network_cmd_port = \"$RA_PORT\""
 }
 
 arcade_base_config() {
@@ -76,6 +79,9 @@ game_value() {
     ROTATE)
       v="$(cfg_get "$file" video_rotation 2>/dev/null)" || return 0
       case "$v" in 0) echo 0 ;; 1) echo 90 ;; 2) echo 180 ;; 3) echo 270 ;; esac ;;
+    CONTINUE)
+      v="$(cfg_get "$file" savestate_auto_save 2>/dev/null)" || return 0
+      [[ "$v" == true ]] && echo on || echo off ;;
     ASPECT)
       v="$(cfg_get "$file" aspect_ratio_index 2>/dev/null)" || return 0
       case "$v" in 22) echo core ;; 0) echo 4:3 ;; 24) echo full ;; 21) echo square ;; *) echo "index $v" ;; esac ;;
@@ -99,7 +105,7 @@ show_game() {
   else printf 'TITLE\t%s\tdefault\n' "${db:-$rom}"
   fi
 
-  for key in ART SHADER SMOOTH ASPECT INTEGER ROTATE; do
+  for key in ART SHADER SMOOTH ASPECT INTEGER ROTATE CONTINUE; do
     value="$(game_value "$file" "$key")"
     printf '%s\t%s\t%s\n' "$key" "$value" "$([[ -n "$value" ]] && echo game || echo default)"
   done
@@ -163,6 +169,15 @@ set_game() {
           die "$EX_USAGE" "no such shader preset in $(shader_dir): $value"
         put arcade_shader "$value"; put video_shader_enable true
       fi ;;
+    CONTINUE)
+      # RetroArch saves the game's state as it closes and picks it up again
+      # at the next start.
+      case "$value" in
+        "") put savestate_auto_save ""; put savestate_auto_load "" ;;
+        on) put savestate_auto_save true; put savestate_auto_load true ;;
+        off) put savestate_auto_save false; put savestate_auto_load false ;;
+        *) die "$EX_USAGE" "CONTINUE is on or off" ;;
+      esac ;;
     SMOOTH)
       case "$value" in "") put video_smooth "" ;; smooth) put video_smooth true ;; sharp) put video_smooth false ;;
         *) die "$EX_USAGE" "SMOOTH is smooth or sharp" ;; esac ;;

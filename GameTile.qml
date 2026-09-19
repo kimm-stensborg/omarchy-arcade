@@ -17,7 +17,7 @@ Item {
   readonly property bool active: index === arcade.selectedIndex
   readonly property string art: Library.artFor(arcade.artMap, entry)
   readonly property bool pending: Library.artPending(arcade.artMap, entry)
-  readonly property string note: Present.tileNote(entry, arcade.now, arcade.sortBy)
+  readonly property string note: Present.tileNote(entry, arcade.now, arcade.sortBy, arcade.gamePaused)
   readonly property bool broken: Library.problemOf(entry).length > 0
   readonly property bool absent: !!entry && entry.installed === false
 
@@ -107,7 +107,7 @@ Item {
               id: playingText
               anchors.centerIn: parent
               textFormat: Text.PlainText
-              text: "PLAYING"
+              text: arcade.gamePaused ? "PAUSED" : "PLAYING"
               color: arcade.artWell
               font.family: arcade.fontFamily
               font.pixelSize: Style.font.caption

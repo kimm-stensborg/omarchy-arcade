@@ -156,7 +156,7 @@ function playedAgo(epoch, now) {
 // What the line under a tile says after the ROM name.
 // It speaks to the order the wall is in: plays when sorted by them, the year
 // when sorted by that, otherwise when you last played it.
-function tileNote(game, now, sort) {
+function tileNote(game, now, sort, paused) {
   if (!game) return ""
   var notes = []
   var plays = Library.playCount(game)
@@ -166,7 +166,7 @@ function tileNote(game, now, sort) {
   if (game.installed === false) return "not in your collection"
   if (Library.problemOf(game)) return "won't start  ·  " + Library.problemOf(game)
   if (Library.versionCount(game) > 1) notes.push((game.versionIndex + 1) + " of " + Library.versionCount(game) + " versions")
-  if (game.playing) notes.push("playing now")
+  if (game.playing) notes.push(paused ? "waiting for you" : "playing now")
   else if (Library.latestPlay(game) && sort !== "most played" && sort !== "year") notes.push(playedAgo(Library.latestPlay(game), now))
   return notes.join("  ·  ")
 }
@@ -180,9 +180,10 @@ function versionNote(tile) {
 }
 
 // What Enter will do to the game already running, said before it is pressed.
-function launchNote(selected, playing) {
+function launchNote(selected, playing, paused) {
   if (!selected || !playing) return ""
-  if (selected.path === playing.path) return "playing now · Enter goes back to it"
+  if (selected.path === playing.path)
+    return paused ? "waiting for you · Enter picks it up where it was" : "playing now · Enter goes back to it"
   return "Enter closes " + playing.title + " and starts this"
 }
 

@@ -42,6 +42,9 @@ readonly RUNNING_FILE="${XDG_RUNTIME_DIR:-/tmp}/omarchy-arcade.running"
 # The program to run and the process name to look for. Only the tests change
 # it, so they never mistake a RetroArch you have open for one of theirs.
 readonly RETROARCH_BIN="${ARCADE_RETROARCH_BIN:-retroarch}"
+# RetroArch listens for commands -- pause, resume, how it is doing -- on this
+# UDP port while an arcade game runs; `retroarch --command` sends them.
+readonly RA_PORT="${ARCADE_RA_PORT:-55355}"
 
 # The settings the overlay's editor may read and write. Everything else in
 # arcade.conf is still honoured -- this list is only what gets a row in the
@@ -248,6 +251,22 @@ main() {
         exit "$(first_problem_code)"
       fi
       cmd_add "$@"
+      exit 0
+      ;;
+    --playing)
+      # What the game this launcher started is doing: "playing", "paused", or
+      # nothing at all. Exit 1 when there is no game of ours running.
+      local state
+      state="$(game_state)"
+      [[ -n "$state" ]] || exit 1
+      printf '%s\n' "$state"
+      exit 0
+      ;;
+    --pause | --resume)
+      # The panel sits on top of the game while it is up; the game waits.
+      local want=playing
+      [[ "$1" == --pause ]] && want=paused
+      set_game_paused "$want" || exit 1
       exit 0
       ;;
     --stop)

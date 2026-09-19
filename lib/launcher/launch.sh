@@ -18,6 +18,8 @@ launch_rom() {
   if [[ -n "$running" ]]; then
     IFS=$'\t' read -r pid path <<<"$running"
     if [[ "$path" == "$rom" ]]; then
+      # Paused while the panel sat on top of it: it picks up where it was.
+      set_game_paused playing || true
       focus_window "$pid"
       record_play "$rom" "$(date +%s)"
       return 0
@@ -86,6 +88,51 @@ launch_rom() {
   # -- is not held up while RetroArch loads.
   watch_launch "$pid" "$rom" "$offset" "$started" </dev/null >/dev/null 2>&1 &
   disown $! 2>/dev/null || true
+}
+
+# ---- talking to the game
+#
+# RetroArch listens on a UDP port while an arcade game runs (the arcade turns
+# that on for its own games; see arcade_base_lines), so the panel can pause the
+# game it is sitting on top of and let it go again.
+
+# One command to the running game, and its answer when it has one.
+ra_command() {
+  python3 - "$RA_PORT" "$1" <<'EOF' 2>/dev/null
+import socket, sys
+port, command = int(sys.argv[1]), sys.argv[2]
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.settimeout(1.0)
+try:
+    sock.sendto(command.encode(), ("127.0.0.1", port))
+    print(sock.recvfrom(4096)[0].decode(errors="replace").strip())
+except OSError:
+    pass
+EOF
+}
+
+# "playing", "paused", or nothing when no arcade game is running.
+game_state() {
+  running_game >/dev/null || return 0
+  local answer
+  answer="$(ra_command GET_STATUS)"
+  case "$answer" in
+    *PAUSED*) printf 'paused\n' ;;
+    *PLAYING*) printf 'playing\n' ;;
+  esac
+}
+
+# Pause the running game, or let it go again. Saying which rather than
+# toggling means the panel and the game agree even if one of them was already
+# in that state.
+set_game_paused() {
+  local want="$1" state
+  state="$(game_state)"
+  [[ -n "$state" ]] || return 1
+  if [[ "$want" == paused && "$state" == playing ]] || [[ "$want" == playing && "$state" == paused ]]; then
+    ra_command PAUSE_TOGGLE >/dev/null
+  fi
+  return 0
 }
 
 # "pid<TAB>path" of the game this launcher started, if it is still running.

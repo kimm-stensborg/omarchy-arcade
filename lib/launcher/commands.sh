@@ -24,7 +24,7 @@ Usage:
   $PROGRAM --game ROM       Print one game's own settings: title, artwork, picture, controls
   $PROGRAM --game-set ROM KEY=VALUE...
                             Change them (empty = back to the shared setting). Keys:
-                            TITLE, ART (titles snaps boxarts custom), SHADER (none or a
+                            TITLE, CONTINUE (on off), ART (titles snaps boxarts custom), SHADER (none or a
                             preset), SMOOTH (smooth sharp), ASPECT (core 4:3 full square),
                             INTEGER (on off), ROTATE (0 90 180 270), or a control id
   $PROGRAM --game-image ROM FILE
@@ -44,6 +44,9 @@ Usage:
                             the ones that do, fetch their artwork. A folder
                             stands for the romsets in it
   $PROGRAM --pick           Choose romsets in a file chooser; prints their paths
+  $PROGRAM --pause          Pause the running game
+  $PROGRAM --resume         Let it go again
+  $PROGRAM --playing        Print "playing" or "paused" (1: no game of ours is running)
   $PROGRAM --stop           Close the game this launcher started (1: none running,
                             72: a RetroArch started some other way is left alone)
   $PROGRAM --controller     Print the game controller RetroArch will use, its
