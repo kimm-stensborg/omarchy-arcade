@@ -6,7 +6,7 @@
 # Adding games
 #
 # A romset dropped on the panel (or passed to --add) is copied into ROM_DIR and
-# then actually loaded: RetroArch runs the core for a couple of frames with no
+# then actually played for a moment: RetroArch runs the core for ten seconds of game time with no
 # window and no sound, and the same log lines that tell a failed launch apart
 # say whether it runs. Only the ones that do are kept. It is tested from inside
 # ROM_DIR because that is where the BIOS a game needs is looked for.
@@ -28,26 +28,38 @@ probe_rom() {
   # history or play time, and its config left exactly as it was.
   {
     arcade_base_lines
+    # A null input driver too: with a null video driver and a real one,
+    # RetroArch gives up before the first frame.
     printf '%s\n' 'video_driver = "null"' 'audio_driver = "null"' \
+      'input_driver = "null"' 'input_joypad_driver = "null"' \
       'history_list_enable = "false"' 'content_runtime_log = "false"' \
       'content_runtime_log_aggregate = "false"'
   } >"$cfg"
-  local -a cmd=("$RETROARCH_BIN" --verbose --max-frames=2 -L "$CORE_PATH")
+  # 600 frames is ten seconds of the game, run as fast as the machine goes
+  # -- a fraction of a second -- so a set that crashes once it is running is
+  # caught as well as one that will not load.
+  local -a cmd=("$RETROARCH_BIN" --verbose --max-frames=600 -L "$CORE_PATH")
   [[ -n "$RETROARCH_CONFIG" ]] && cmd+=(--config "$RETROARCH_CONFIG")
   cmd+=(--appendconfig "$cfg" "$rom")
-  timeout 30 "${cmd[@]}" >"$log" 2>&1 </dev/null || true
+  local status=0
+  timeout 30 "${cmd[@]}" >"$log" 2>&1 </dev/null || status=$?
 
   local chunk
   chunk="$(cat -- "$log")"
   # Missing files first: FBNeo still reports a picture for its own "files
-  # are missing" screen. "Unloading game" is not a failure here -- every test
-  # run ends with it after its two frames.
+  # are missing" screen. "Unloading game" is how every test run ends.
   if grep -qE 'is required$|Failed to load content' <<<"$chunk"; then
     reason="$(launch_failure "$chunk")"
     reason="${reason:-RetroArch could not load it.}"
   elif ! grep -q '\[Core\] Geometry:' <<<"$chunk"; then
     reason="$(launch_failure "$chunk")"
     reason="${reason:-RetroArch could not load it with this core.}"
+  elif ((status == 124)); then
+    reason="It froze: RetroArch was still on it after 30 seconds."
+  elif ((status > 128)); then
+    reason="RetroArch crashed while running it (signal $((status - 128)))."
+  elif ((status != 0)); then
+    reason="RetroArch stopped with an error while running it (exit $status)."
   fi
   rm -f -- "$cfg" "$log"
   printf '%s' "$reason"

@@ -50,6 +50,7 @@ if [[ " $* " == *" --max-frames="* ]]; then
   case "${*: -1}" in
     *bad.zip) echo "[libretro ERROR] [FBNeo] ROM at index 0 with name 201-p1.p1 and CRC 0x1 is required"
               echo "[INFO] [Core] Geometry: 640x480, Aspect: 1.333, FPS: 60.00" ;;
+    *latecrash.zip) echo "[INFO] [Core] Geometry: 256x224, Aspect: 1.333, FPS: 60.00"; kill -SEGV $$ ;;
     *crash.zip) exit 1 ;;
     *) echo "[INFO] [Core] Geometry: 256x224, Aspect: 1.333, FPS: 60.00" ;;
   esac
@@ -233,6 +234,9 @@ sleep 1; printf 'g2' >"$checkdir/bad.zip"
 check "a romset replaced since is not known any more" \
   "$(ROM_DIR="$checkdir" "$launcher" --list | awk -F'\t' '$2 ~ /bad.zip$/ { print "[" $13 "]" }')" "[]"
 check "a name that is not there is said so" "$(ROM_DIR="$checkdir" "$launcher" --check nosuchgame | cut -f1,3)" "broken"$'\t'"no such romset"
+printf 'l' >"$checkdir/latecrash.zip"
+check "a game that crashes once it is running is caught" \
+  "$(ROM_DIR="$checkdir" "$launcher" --check latecrash | grep '^broken' | cut -f3)" "RetroArch crashed while running it (signal 11)."
 rm -f "$XDG_STATE_HOME/omarchy/arcade-check.tsv"
 
 # ------------------------------------------------------------- game settings
