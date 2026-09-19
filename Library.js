@@ -7,8 +7,9 @@
 // running shell, so all of it is tested by test.js.
 
 // "Title<TAB>/path/to/rom.zip<TAB>last played<TAB>playing<TAB>database title
-// <TAB>year<TAB>maker<TAB>favourite<TAB>plays" per line, exactly what --list
-// prints; all but the first two may be empty or absent. Lines without a
+// <TAB>year<TAB>maker<TAB>favourite<TAB>plays<TAB>genre<TAB>players
+// <TAB>orientation<TAB>problem<TAB>family<TAB>missing" per line, exactly what
+// --list prints; all but the first two may be empty or absent. Lines without a
 // tab are ignored rather than guessed at: a half-parsed row would launch the
 // wrong file.
 function parseList(text) {
@@ -34,7 +35,19 @@ function parseList(text) {
       year: parts[5] || "",
       maker: parts[6] || "",
       favourite: parts[7] === "favourite",
-      plays: isNaN(plays) ? 0 : plays
+      plays: isNaN(plays) ? 0 : plays,
+      // "Maze / Action": a game can be more than one kind.
+      genres: parts[9] ? parts[9].split(" / ") : [],
+      players: parseInt(parts[10] || "", 10) || 0,
+      vertical: parts[11] === "vertical",
+      // Why it does not start, as last found out; "" when it does or nobody knows.
+      problem: parts[12] || "",
+      // The parent set this one is a version of, itself for a parent -- from
+      // FinalBurn Neo's own table; "" when FBNeo does not know the game.
+      family: parts[13] || "",
+      // A game FinalBurn Neo knows that is not in ROM_DIR: its "path" is the
+      // bare ROM name, and it can be browsed and made a favourite, not played.
+      installed: parts[14] !== "missing"
     })
   }
   return games
@@ -43,12 +56,19 @@ function parseList(text) {
 // ------------------------------------------------------------------ versions
 //
 // A romset library holds the same game several times over: sfiii, sfiiiu and
-// sfiiij are Street Fighter III for Europe, the USA and Japan. There is no
-// parent/clone table on this machine to ask, but the database names every
-// version of a game the same way with its differences in brackets, so the
-// title with the brackets taken off is the game.
+// sfiiij are Street Fighter III for Europe, the USA and Japan. FinalBurn
+// Neo's table says which set each is a version of, and that is the answer
+// wherever it knows the game. For the rest, the database names every version
+// of a game the same way with its differences in brackets, so the title with
+// the brackets taken off is the game.
 
 function versionKey(game) {
+  if (!game) return ""
+  if (game.family) return "set:" + game.family
+  return titleKey(game)
+}
+
+function titleKey(game) {
   if (!game) return ""
   var title = String(game.dbTitle || "")
   // No database title means nothing is known about it: it stands alone rather
@@ -66,13 +86,15 @@ function versionKey(game) {
   return base ? "title:" + base : "rom:" + game.rom
 }
 
-// Which version stands for the game when nobody has picked one. The parent set
-// has the shortest name nearly always -- sfiii before sfiiiu -- which is also
-// the one most people mean. MAME squeezes names into eight letters, though, so
+// Which version stands for the game when nobody has picked one: the parent
+// set, when FinalBurn Neo says which that is. Otherwise the parent has the
+// shortest name nearly always -- sfiii before sfiiiu -- which is also the one
+// most people mean. MAME squeezes names into eight letters, though, so
 // snowbros, snowbroa and snowbroj tie; then a set with a title of its own
 // wins (the shipped titles name parents), then one the database calls
 // "set 1" or "World", then the alphabet.
 function mainVersion(versions) {
+  function parent(v) { return !!v.family && v.rom === v.family }
   function rank(v) {
     var db = String(v.dbTitle || "").toLowerCase()
     if (v.dbTitle && v.title !== v.dbTitle) return 0
@@ -83,6 +105,7 @@ function mainVersion(versions) {
   for (var i = 0; i < versions.length; i++) {
     var v = versions[i]
     if (!best) { best = v; continue }
+    if (parent(v) !== parent(best)) { if (parent(v)) best = v; continue }
     if (v.rom.length !== best.rom.length) { if (v.rom.length < best.rom.length) best = v; continue }
     var rv = rank(v), rb = rank(best)
     if (rv < rb || (rv === rb && v.rom < best.rom)) best = v
@@ -99,8 +122,19 @@ function groupGames(games, picked) {
   var order = []
   var groups = ({})
 
+  // A version FBNeo does not know (a MAME-only set, say) joins the family of
+  // one it does know by the same title, rather than standing apart from its
+  // own siblings.
+  var families = ({})
+  for (var f = 0; f < list.length; f++) {
+    if (!list[f].family || !list[f].dbTitle) continue
+    var tk = titleKey(list[f])
+    if (!families[tk]) families[tk] = versionKey(list[f])
+  }
+
   for (var i = 0; i < list.length; i++) {
     var key = versionKey(list[i])
+    if (!list[i].family && families[key]) key = families[key]
     if (!groups[key]) { groups[key] = []; order.push(key) }
     groups[key].push(list[i])
   }
@@ -108,6 +142,11 @@ function groupGames(games, picked) {
   var out = []
   for (var g = 0; g < order.length; g++) {
     var members = groups[order[g]]
+    // What you have stands for the game; the versions you do not have only
+    // count when you have none of them.
+    var owned = members.filter(function(v) { return v.installed !== false })
+    var missing = members.length - owned.length
+    if (owned.length) members = owned
     var main = mainVersion(members)
     var versions = [main]
     for (var m = 0; m < members.length; m++) {
@@ -131,6 +170,8 @@ function groupGames(games, picked) {
     var tile = {}
     for (var prop in rep) tile[prop] = rep[prop]
     tile.groupKey = order[g]
+    tile.installed = owned.length > 0
+    tile.missingVersions = owned.length ? missing : 0
     // A game is a favourite whichever of its versions was marked: that
     // belongs to the game, not to the region it was marked in.
     tile.favourite = false
@@ -139,7 +180,16 @@ function groupGames(games, picked) {
     tile.versionIndex = versions.indexOf(rep)
     out.push(tile)
   }
-  return out
+  // Each tile where its main version is in the list -- the launcher's list
+  // is in title order -- so a family is listed by its parent's name, not by
+  // whichever version's name came first ("Tournament Pro Golf" among the T's,
+  // not beside "18 Holes Pro Golf"). The main version, not the one showing,
+  // so stepping through versions never moves the tile.
+  var place = new Map()
+  for (var p = 0; p < list.length; p++) place.set(list[p], p)
+  var at = out.map(function(t) { return { t: t, n: place.get(t.versions[0]) } })
+  at.sort(function(a, b) { return a.n - b.n })
+  return at.map(function(e) { return e.t })
 }
 
 // The next version of a tile's game, as the new picked map.
@@ -248,11 +298,27 @@ function sortGames(games, sort) {
 // maker. "" is "any" for the last two. Decades and makers are only the ones
 // the library actually has, so no choice ever shows an empty wall.
 var SHOWS = [
-  { key: "all", label: "All games" },
+  { key: "all", label: "In your collection" },
   { key: "favourites", label: "Favourites" },
   { key: "played", label: "Played" },
-  { key: "unplayed", label: "Never played" }
+  { key: "unplayed", label: "Never played" },
+  { key: "broken", label: "Won't start" },
+  { key: "missing", label: "Not in your collection" },
+  { key: "everything", label: "Every game" }
 ]
+
+// Whether a game is in view at all for a Show choice, before any other
+// filter: your own games, bar a few choices that reach past them.
+function inScope(game, show) {
+  if (show === "everything" || show === "favourites") return true
+  if (show === "missing") return game.installed === false
+  return game.installed !== false
+}
+
+// Show choices that need FinalBurn Neo's whole list, not just your games.
+function needsCatalogue(show) {
+  return show === "missing" || show === "everything"
+}
 
 function showKeys() {
   return SHOWS.map(function(s) { return s.key })
@@ -291,8 +357,62 @@ function makerOptions(games) {
   return [""].concat(names)
 }
 
+// The kinds of game the library has, the commonest first. A game of two
+// kinds counts for both.
+function genreOptions(games) {
+  var count = {}
+  var names = []
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    var gs = list[i].genres || []
+    for (var j = 0; j < gs.length; j++) {
+      if (!count[gs[j]]) { count[gs[j]] = 0; names.push(gs[j]) }
+      count[gs[j]]++
+    }
+  }
+  names.sort(function(a, b) { return count[b] !== count[a] ? count[b] - count[a] : (a < b ? -1 : 1) })
+  return [""].concat(names)
+}
+
+// How many can play at once, as the library has it: "1", "2", "4"...
+function playerOptions(games) {
+  var seen = {}
+  var out = []
+  var list = games || []
+  for (var i = 0; i < list.length; i++) {
+    var n = list[i].players
+    if (n > 0 && !seen[n]) { seen[n] = true; out.push(n) }
+  }
+  out.sort(function(a, b) { return a - b })
+  return [""].concat(out.map(String))
+}
+
+function playersLabel(n) {
+  if (!n) return "Any players"
+  return n === "1" || n === 1 ? "1 player" : n + " players"
+}
+
+// A tile stands for all its versions: it won't start only if the one showing
+// won't -- another version may be the one that works.
+function problemOf(game) {
+  return game ? String(game.problem || "") : ""
+}
+
+// The footer's word on a game that won't start, or is not here: why, and
+// what to do.
+function problemNote(game) {
+  if (game && game.installed === false)
+    return "Not in your collection. FinalBurn Neo plays it as " + game.rom + ".zip; Alt+A adds a romset"
+  var why = problemOf(game)
+  return why ? "Won't start: " + why : ""
+}
+
 function matchesFilters(game, filters) {
   var f = filters || ({})
+  if (!inScope(game, f.show || "all")) return false
+  if (f.show === "broken" && !problemOf(game)) return false
+  if (f.genre && (game.genres || []).indexOf(f.genre) < 0) return false
+  if (f.players && String(game.players) !== String(f.players)) return false
   if (f.show === "favourites" && !isFavourite(game)) return false
   if (f.show === "played" && !latestPlay(game)) return false
   if (f.show === "unplayed" && latestPlay(game)) return false
@@ -307,7 +427,7 @@ function applyFilters(games, filters) {
 
 function filtersActive(filters) {
   var f = filters || ({})
-  return !!((f.show && f.show !== "all") || f.decade || f.maker)
+  return !!((f.show && f.show !== "all") || f.decade || f.maker || f.genre || f.players)
 }
 
 // The next value of one filter, as a new filters object. A filter whose
@@ -324,6 +444,8 @@ function emptyNote(filters) {
   var f = filters || ({})
   if (f.show === "favourites" && !f.decade && !f.maker) return "No favourites yet. Alt+F on a game adds it."
   if (f.show === "unplayed" && !f.decade && !f.maker) return "You have played every game here."
+  if (f.show === "broken" && !f.decade && !f.maker && !f.genre && !f.players)
+    return "Every game checked so far starts. Settings › Check the library tests the rest."
   return "No games match these filters."
 }
 
@@ -391,6 +513,9 @@ function gameFacts(game, now) {
   var facts = []
   if (game.maker) facts.push(game.maker)
   if (game.year) facts.push(game.year)
+  if (game.genres && game.genres.length) facts.push(game.genres.join(" / "))
+  if (game.players) facts.push(playersLabel(game.players))
+  if (game.vertical) facts.push("vertical screen")
   if (versionCount(game) > 1) facts.push(versionCount(game) + " versions")
   if (game.playing) facts.push("playing now")
   else if (latestPlay(game)) facts.push("played " + playedAgo(latestPlay(game), now))
@@ -473,6 +598,30 @@ function addProgress(line) {
   return parts[3] === "1" ? "Checking " + parts[1] + "…" : "Checking " + parts[1] + "  (" + parts[2] + " of " + parts[3] + ")…"
 }
 
+// ------------------------------------------------------------- attract mode
+
+// The games attract mode can show: the ones whose title screen is here, in an
+// order shuffled by `seed` -- a different run each time, but the same one for
+// the same seed, so the tests can say what it is.
+function attractOrder(games, map, seed) {
+  var list = []
+  var src = games || []
+  for (var i = 0; i < src.length; i++) if (artFor(map, src[i])) list.push(src[i])
+  var s = (seed | 0) || 1
+  function next() { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x80000000 }
+  for (var j = list.length - 1; j > 0; j--) {
+    var k = Math.floor(next() * (j + 1))
+    var t = list[j]; list[j] = list[k]; list[k] = t
+  }
+  return list
+}
+
+// Seconds of quiet before attract mode starts, or 0 for never.
+function attractSeconds(value) {
+  var n = parseInt(String(value || ""), 10)
+  return isNaN(n) || n <= 0 ? 0 : n
+}
+
 // What the launcher said on stderr, as one line for the panel: its first,
 // without the "arcade-launcher: " every message starts with.
 function launcherError(text) {
@@ -520,6 +669,9 @@ function tileNote(game, now, sort) {
   var plays = playCount(game)
   if (sort === "most played" && plays) notes.push(plays === 1 ? "1 play" : plays + " plays")
   if (sort === "year" && game.year) notes.push(game.year)
+  // Why it won't start, first: nothing else about it matters until it does.
+  if (game.installed === false) return "not in your collection"
+  if (problemOf(game)) return "won't start  ·  " + problemOf(game)
   if (versionCount(game) > 1) notes.push((game.versionIndex + 1) + " of " + versionCount(game) + " versions")
   if (game.playing) notes.push("playing now")
   else if (latestPlay(game) && sort !== "most played" && sort !== "year") notes.push(playedAgo(latestPlay(game), now))

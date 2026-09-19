@@ -157,8 +157,8 @@ ListView {
         visible: settingRow.active && !settingRow.editingThis
         text: settingRow.entry && settingRow.entry.kind === "bind"
           ? "Enter to bind"
-          : settingRow.entry && settingRow.entry.kind === "padtest"
-          ? "Enter to start"
+          : settingRow.entry && (settingRow.entry.kind === "padtest" || settingRow.entry.kind === "check")
+          ? (settingRow.entry.kind === "check" && arcade.checkState.running ? "" : "Enter to start")
           : settingRow.entry && settingRow.entry.kind === "padinfo"
           ? "F5 re-checks"
           : (settingRow.entry && (settingRow.entry.kind === "choice" || settingRow.entry.kind === "number")
@@ -179,6 +179,7 @@ ListView {
           if (settingRow.entry && settingRow.entry.kind === "choice") arcade.stepSetting(1)
           else if (settingRow.entry && settingRow.entry.kind === "bind") arcade.beginCapture()
           else if (settingRow.entry && settingRow.entry.kind === "padtest") arcade.startPadTest()
+          else if (settingRow.entry && settingRow.entry.kind === "check") arcade.startCheck()
           else if (settingRow.entry && settingRow.entry.kind === "padinfo") {}
           else if (!settingRow.editingThis) arcade.beginEdit()
         }

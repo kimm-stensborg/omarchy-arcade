@@ -75,6 +75,11 @@ ROM_DIR="$HOME/Games/roms"
 # chip (Alt+O) changes it and writes it here.
 #SORT_BY="last played"
 
+# Left open with nothing pressed for this many seconds, the panel shows the
+# games' title screens one after another, like a cabinet waiting for coins.
+# Any key, button or mouse movement brings the wall back. "off" never does.
+#ATTRACT_AFTER="60"
+
 # One tile per game however many regional versions of it are in ROM_DIR, with
 # Tab to step through them. "off" puts every romset on the wall on its own.
 #GROUP_VERSIONS="on"

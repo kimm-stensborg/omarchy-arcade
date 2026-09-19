@@ -46,9 +46,13 @@ Item {
     Text {
       width: parent.width
       textFormat: Text.PlainText
-      text: arcade.addNote || arcade.launchNote || Library.gameFacts(arcade.selected, arcade.now)
-      color: (arcade.addNote && !arcade.addOk) || arcade.launchNote ? arcade.accent : arcade.foreground
-      opacity: (arcade.addNote && !arcade.addOk) || arcade.launchNote ? 1 : 0.55
+      // A game that won't start says why here, where there is room for all
+      // of it; its tile only has room to say that it won't.
+      readonly property string problem: Library.problemNote(arcade.selected)
+      readonly property bool urgent: (arcade.addNote && !arcade.addOk) || !!arcade.launchNote || !!problem
+      text: arcade.addNote || arcade.launchNote || problem || Library.gameFacts(arcade.selected, arcade.now)
+      color: urgent ? arcade.accent : arcade.foreground
+      opacity: urgent ? 1 : 0.55
       font.family: arcade.fontFamily
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight

@@ -185,6 +185,56 @@ check "a name with a space is refused" "$?" "64"
 check "so is no name at all" "$?" "64"
 "$launcher" --unfavourite bublbobl
 
+# ------------------------------------------------------------- game facts
+
+check "a game's genre, players and screen come from the shipped table" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /bublbobl/ { print $10 "|" $11 "|" $12 }')" "Platform|2|horizontal"
+check "a romset the table does not know has none" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /mystery/ { print $10 "|" $11 "|" $12 "|" $14 }')" "|||"
+check "a parent set is its own family" \
+  "$("$launcher" --list | awk -F'\t' '$2 ~ /bublbobl/ { print $14 }')" "bublbobl"
+check "and a launcher run through a symlink still finds the table" \
+  "$(ln -s "$launcher" "$sandbox/bin/linked-launcher"; "$sandbox/bin/linked-launcher" --list | awk -F'\t' '$2 ~ /bublbobl/ { print $10 }')" "Platform"
+
+# ------------------------------------------------ beyond your collection
+
+all="$("$launcher" --list --all)"
+known_here="$(awk -F'\t' '$15 == "" && $14 != ""' <<<"$all" | wc -l | tr -d ' ')"
+check "--all adds every game FinalBurn Neo knows that is not here" \
+  "$(awk -F'\t' '$15 == "missing"' <<<"$all" | wc -l | tr -d ' ')" "$(($(grep -vc '^#' "$here/share/arcade-gameinfo.tsv") - known_here))"
+check "the one you have is not listed twice" \
+  "$(awk -F'\t' '$2 ~ /\/bublbobl\.zip$/ || $2 == "bublbobl"' <<<"$all" | wc -l | tr -d ' ')" "1"
+check "a game you do not have keeps its ROM name for a path, and its family" \
+  "$(awk -F'\t' '$2 == "bublboblr" { print $14 "|" $15 }' <<<"$all")" "bublbobl|missing"
+check "and a title of its own, from FBNeo when the database has none" \
+  "$(awk -F'\t' '$2 == "19yy" { print $1 }' <<<"$all")" "19YY"
+check "the plain listing is only what is here" "$("$launcher" --list | awk -F'\t' '$15 == "missing"' | wc -l | tr -d ' ')" "0"
+"$launcher" --favourite galaga
+check "a favourite you do not have yet comes along, marked" \
+  "$("$launcher" --list | awk -F'\t' '$2 == "galaga" { print $8 "|" $15 }')" "favourite|missing"
+"$launcher" --unfavourite galaga
+
+# ------------------------------------------------------------ the library check
+
+checkdir="$sandbox/checkroms"
+mkdir -p "$checkdir"
+printf 'g' >"$checkdir/good.zip"
+printf 'b' >"$checkdir/bad.zip"
+out="$(ROM_DIR="$checkdir" "$launcher" --check)"
+check "each game is announced as it is checked" "$(grep -c '^checking' <<<"$out")" "2"
+check "one that starts is ok" "$(grep -c "^ok"$'\t'"$checkdir/good.zip" <<<"$out")" "1"
+check "one that does not says why" "$(grep "^broken" <<<"$out" | cut -f3)" "1 file is missing from the romset (201-p1.p1) -- it may be for another version, or need its BIOS."
+check "the listing carries the reason" \
+  "$(ROM_DIR="$checkdir" "$launcher" --list | awk -F'\t' '$2 ~ /bad.zip$/ { print ($13 != "") } $2 ~ /good.zip$/ { print ($13 == "") }' | tr -d '\n')" "11"
+out="$(ROM_DIR="$checkdir" "$launcher" --check)"
+check "a second check remembers rather than loading again" "$(grep -c '^checking' <<<"$out"),$(grep -c '^known-' <<<"$out")" "0,2"
+check "--all loads them again" "$(ROM_DIR="$checkdir" "$launcher" --check --all | grep -c '^checking')" "2"
+sleep 1; printf 'g2' >"$checkdir/bad.zip"
+check "a romset replaced since is not known any more" \
+  "$(ROM_DIR="$checkdir" "$launcher" --list | awk -F'\t' '$2 ~ /bad.zip$/ { print "[" $13 "]" }')" "[]"
+check "a name that is not there is said so" "$(ROM_DIR="$checkdir" "$launcher" --check nosuchgame | cut -f1,3)" "broken"$'\t'"no such romset"
+rm -f "$XDG_STATE_HOME/omarchy/arcade-check.tsv"
+
 # ------------------------------------------------------------- game settings
 
 game() { "$launcher" --game "$1" | awk -F'\t' -v k="$2" '$1 == k { print $2 "|" $3 }'; }

@@ -87,6 +87,7 @@ links `arcade-launcher`, `arcade-rdb-dump` and `arcade-artwork` into
 | `Alt+F` | make the selected game a favourite, or not |
 | `Alt+O` | the next sort order: last played, favourites, most played, name, year (`Shift` for the previous) |
 | `Alt+V` `Alt+D` `Alt+M` | filter: which games, decade, maker (`Shift` for the previous) |
+| `Alt+G` `Alt+P` | filter by genre, by number of players (`Shift` for the previous) |
 | `Alt+0` | clear the filters |
 | `Alt+E` | this game's own settings: name, artwork, picture, controls (again to close them) |
 | `Alt+A` | add games: pick romsets in a file chooser (or `+` in the header) |
@@ -117,15 +118,73 @@ The chips beside it filter the wall, and are lit while they do:
 
 | Chip | Key | Shows |
 |------|-----|-------|
-| All games / Favourites / Played / Never played | `Alt+V` | which games |
+| In your collection / Favourites / Played / Never played / Won't start / Not in your collection / Every game | `Alt+V` | which games |
 | a decade | `Alt+D` | only the games from that decade, e.g. 1980s |
 | a maker | `Alt+M` | only that maker's games. The makers with the most games come first |
+| a genre | `Alt+G` | only that kind of game: vertical shooter, platform, fighting... A game of two kinds counts for both |
+| a number of players | `Alt+P` | only games that many can play at once |
 | Clear filters | `Alt+0` | everything again |
 
-The decades and makers on offer are the ones your library actually has, so no
+The decades, makers, genres and player counts on offer are the ones your library actually has, so no
 choice ever leaves the wall empty by itself. A search keeps the filters, but
 ranks by how well each game matches rather than by the sort. Filters are for
 one open of the panel, like the search: it always opens on the whole library.
+
+### Every game, not only yours
+
+**Not in your collection** and **Every game** under `Alt+V` reach past
+`ROM_DIR` to every working arcade game FinalBurn Neo knows -- about 2,750 of
+them, each version grouped under its game as on your own wall. They sort and
+filter like the rest: every vertical shooter of the 1980s, every Capcom
+fighter, and so on. A game you do not have is marked NOT INSTALLED; `Enter`
+says which romset FBNeo expects ("FinalBurn Neo plays it as galaga.zip")
+instead of starting anything, and `Alt+A` adds one. It can still be made a
+favourite: favourites are a wishlist too, shown under **Favourites** and
+already starred when the romset arrives.
+
+The list is read the first time one of those two is chosen, in a fraction of
+a second, and not at all otherwise. Title screens for games you do not have
+are fetched as you scroll past them, like any other, so browsing the whole
+catalogue fills the artwork cache with some thousands of pictures (roughly
+15-30 KB each); `ARTWORK="off"` stops that as it stops the rest.
+
+### What kind of game it is
+
+Genre, how many can play at once, whether the screen stands on its side, and
+which set each version belongs to come from FinalBurn Neo's own driver table,
+along with its name, year and maker for every game, shipped as
+`share/arcade-gameinfo.tsv` (about 8,600 working arcade games) and rebuilt with
+`tools/make-gameinfo.py` against a checkout of FBNeo. The info bar says them
+("Taito Corporation · 1986 · Platform · 2 players"), the Genre and Players
+chips filter by them, and a vertical game's Rotation row in its own settings
+suggests 90° or 270° for a monitor turned on its side. A romset FBNeo does not
+know has none of them.
+
+### Games that won't start
+
+**Settings › Library › Check the library** test-loads every game, the way
+adding one does, and remembers which start. A game that won't is dimmed on
+the wall with a WON'T START badge, the info bar says why ("Won't start: 1
+file is missing from the romset (cchip_upd78c11.bin)"), and **Won't start**
+under `Alt+V` lists them all. The results are kept per file in
+`~/.local/state/omarchy/arcade-check.tsv`: a game is checked again only when
+its romset changes, and playing one updates it too, so a game that failed to
+start is marked, and one you fixed is cleared the moment it starts. A check
+of a whole library takes seconds. From a terminal:
+
+```bash
+arcade-launcher --check            # the games not checked yet
+arcade-launcher --check --all      # every game again
+arcade-launcher --check rbisland   # just these
+```
+
+### Attract mode
+
+Left open on the wall with nothing pressed for a minute (`ATTRACT_AFTER`), the
+panel shows the games' title screens across the screen one after another,
+each with its name, maker and year and a blinking PRESS ANY BUTTON, the way a
+cabinet waits for coins. Any key, button or mouse movement brings the wall
+back, and does nothing else, so waking it never starts a game by accident.
 
 When you last played a game and how often come from
 `~/.local/state/omarchy/arcade-history.tsv`. The first time the panel opens
@@ -172,16 +231,20 @@ shows each game once and says how many versions it has under the tile.
 `Tab` steps through them in place, and whichever one is showing is the one
 `Enter` starts.
 
-Nothing on the machine records which set is a clone of which, so versions are
-grouped by their database title with the bracketed part removed:
-"Street Fighter III: New Generation (Japan 970204)" and "(USA 970204)" are the
-same game. The version a tile shows is the one you picked with `Tab`, otherwise
-the one running, otherwise the one you played last. Failing all three it is
-the main version: the shortest ROM name (the parent set, nearly always). When
-names are the same length, a set you gave a title of your own wins, then one
-the database calls "set 1" or "World". A search lists every version on its
-own, so typing `sfiiij` finds exactly that one. `GROUP_VERSIONS="off"` shows
-every version on the wall. ROMs the database does not know are never grouped.
+Which sets are versions of the same game comes from FinalBurn Neo's own
+table (`share/arcade-gameinfo.tsv`), which names each version's parent set:
+`sfiiiu` and `sfiiij` are versions of `sfiii`. That is the answer wherever
+FBNeo knows the game, even when two different games' titles look alike. A set
+it does not know (a MAME-only one, say) is grouped by its database title with
+the bracketed part removed -- "Street Fighter III: New Generation (Japan
+970204)" and "(USA 970204)" are the same game -- and joins a family FBNeo
+knows by that title. The version a tile shows is the one you picked with
+`Tab`, otherwise the one running, otherwise the one you played last. Failing
+all three it is the parent set; where no parent is known, the shortest ROM
+name, then a set you gave a title of your own, then one the database calls
+"set 1" or "World". A search lists every version on its own, so typing
+`sfiiij` finds exactly that one. `GROUP_VERSIONS="off"` shows every version
+on the wall. ROMs neither FBNeo nor the database know are never grouped.
 
 ### When a game does not start
 
@@ -421,6 +484,7 @@ in the environment for a single run. See
 | `TILE_SIZE` | `300` — the width a game tile aims for, in pixels (overlay only) |
 | `MAX_COLUMNS` | `6` — most tiles in one row (overlay only) |
 | `SORT_BY` | `last played` — the wall's order: `last played`, `favourites`, `most played`, `name` or `year` (overlay only) |
+| `ATTRACT_AFTER` | `60` — seconds of no input on the wall before attract mode; `off` never (overlay only) |
 | `GROUP_VERSIONS` | `on` — one tile per game, `Tab` for its other versions; `off` shows each romset on its own (overlay only) |
 
 ### From the panel
@@ -451,7 +515,7 @@ the line rather than writing a default into it. The file remains the source of
 truth, so editing it by hand is still the same thing as editing it here — the
 panel re-reads it every time it opens.
 
-`TILE_SIZE`, `MAX_COLUMNS`, `SORT_BY` and `GROUP_VERSIONS` are the overlay's own: the launcher does not use
+`TILE_SIZE`, `MAX_COLUMNS`, `SORT_BY`, `GROUP_VERSIONS` and `ATTRACT_AFTER` are the overlay's own: the launcher does not use
 them, but they live in the same file so there is one place arcade settings are
 kept and one editor for them. Changing any of them re-lays out the wall immediately.
 
@@ -637,6 +701,7 @@ Wall.qml                       the grid of games, the empty note, a setup proble
 SettingsList.qml               the editor rows, for the arcade and for one game
 PadTest.qml                    the stick test
 Footer.qml                     the info bar and keycaps, or the plain hints
+AttractMode.qml                title screens, one after another, when left alone
 Library.js                     parsing, versions, sorting, filters, search, formatting
 Settings.js                    the arcade's settings and a game's own, as editor rows
 Controls.js                    key names and the cabinet control rows
@@ -649,6 +714,8 @@ bin/arcade-rdb-dump            libretro .rdb -> TSV extractor (python3, no deps)
 bin/arcade-artwork             title-screen fetcher and cache (python3, no deps)
 bin/arcade-pad                 finds the stick, matches RetroArch's profile, follows its presses
 share/arcade-titles.tsv        title overrides, used until you have your own
+share/arcade-gameinfo.tsv      every working FBNeo arcade game: name, year, maker, genre, players, screen, parent
+tools/make-gameinfo.py         rebuilds arcade-gameinfo.tsv from an FBNeo checkout
 share/arcade.conf.example      commented config template
 hypr/hyprland.conf.snippet     plain-Hyprland window rules
 udev/                          optional hotplug templates

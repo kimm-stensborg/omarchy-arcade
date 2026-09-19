@@ -17,6 +17,8 @@ Item {
   readonly property string art: Library.artFor(arcade.artMap, entry)
   readonly property bool pending: Library.artPending(arcade.artMap, entry)
   readonly property string note: Library.tileNote(entry, arcade.now, arcade.sortBy)
+  readonly property bool broken: Library.problemOf(entry).length > 0
+  readonly property bool absent: !!entry && entry.installed === false
 
   Item {
     anchors.fill: parent
@@ -81,7 +83,9 @@ Item {
             asynchronous: true
             cache: true
             sourceSize.width: 640
-            opacity: tile.active ? 1 : 0.8
+            // A game that won't start steps back further: still there to
+            // pick, since a fixed romset may start now, but not inviting.
+            opacity: tile.broken || tile.absent ? (tile.active ? 0.6 : 0.35) : (tile.active ? 1 : 0.8)
             Behavior on opacity { NumberAnimation { duration: 140 } }
           }
 
@@ -104,6 +108,34 @@ Item {
               textFormat: Text.PlainText
               text: "PLAYING"
               color: arcade.artWell
+              font.family: arcade.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: Style.space(1)
+            }
+          }
+
+          // The last check, or the last try, found it would not start. The
+          // reason is the line under the name.
+          Rectangle {
+            visible: tile.broken || tile.absent
+            z: 2
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.space(8)
+            height: Style.font.caption + Style.space(8)
+            width: brokenText.implicitWidth + Style.space(14)
+            radius: height / 2
+            color: Util.alpha(arcade.artWell, 0.85)
+            border.width: Math.max(1, Style.space(1))
+            border.color: tile.absent ? Util.alpha(arcade.foreground, 0.5) : arcade.accent
+
+            Text {
+              id: brokenText
+              anchors.centerIn: parent
+              textFormat: Text.PlainText
+              text: tile.absent ? "NOT INSTALLED" : "WON'T START"
+              color: tile.absent ? arcade.foreground : arcade.accent
               font.family: arcade.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -155,7 +187,10 @@ Item {
               height: arcade.nameLineHeight
               verticalAlignment: Text.AlignVCenter
               textFormat: Text.PlainText
-              text: tile.entry ? tile.entry.title : ""
+              // A search lists every version on its own; for games you do not
+            // have, the database's full name is what tells them apart.
+            text: !tile.entry ? ""
+              : (arcade.searching && tile.absent && tile.entry.dbTitle ? tile.entry.dbTitle : tile.entry.title)
               color: tile.active ? arcade.accent : arcade.foreground
               opacity: tile.active ? 1 : 0.9
               font.family: arcade.fontFamily
@@ -234,7 +269,10 @@ Item {
       id: tileMouse
       anchors.fill: parent
       hoverEnabled: true
-      onEntered: if (arcade.pointerGate.moved) arcade.setSelected(tile.index)
+      onEntered: {
+        arcade.wake()
+        if (arcade.pointerGate.moved) arcade.setSelected(tile.index)
+      }
       onClicked: function(mouse) {
         arcade.setSelected(tile.index)
         // The heart is a button of its own; anywhere else plays.

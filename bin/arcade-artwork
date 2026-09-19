@@ -130,6 +130,25 @@ def load_titles(path):
     return titles
 
 
+def load_gameinfo_titles(titles):
+    """FinalBurn Neo's own names, for the games the libretro database does not
+    name -- the panel lists games you do not have, and their title screens are
+    filed under these names too. The table ships beside this script."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    path = os.path.join(os.path.dirname(here), "share", "arcade-gameinfo.tsv")
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("#"):
+                    continue
+                fields = line.rstrip("\n").split("\t")
+                if len(fields) >= 6 and fields[0] and fields[5]:
+                    titles.setdefault(fields[0], fields[5])
+    except OSError:
+        pass
+    return titles
+
+
 def thumbnail_urls(title, kinds):
     name = urllib.parse.quote(ILLEGAL.sub("_", title) + ".png")
     for system in SYSTEMS:
@@ -269,7 +288,7 @@ def main(argv):
             except OSError:
                 pass
 
-    titles = load_titles(args.titles)
+    titles = load_gameinfo_titles(load_titles(args.titles))
 
     # Cached images are reported first and without touching the network, so the
     # grid is already dressed before a single request goes out.

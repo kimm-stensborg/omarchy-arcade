@@ -193,8 +193,8 @@ Item {
       text: arcade.settingsOpen ? (arcade.gameRom ? arcade.gameTitle + "  ·  Esc goes back" : "Esc goes back")
         : (arcade.loading ? "reading library…"
         : (arcade.hasProblem ? "setup needed" : (arcade.filterText.trim().length > 0
-        ? Library.describeCount(arcade.rows.length, arcade.games.length)
-        : Library.describeCount(arcade.rows.length, arcade.wallSource.length))))
+        ? Library.describeCount(arcade.rows.length, arcade.searchPool)
+        : Library.describeCount(arcade.rows.length, arcade.scoped.length))))
       color: arcade.hasProblem && !arcade.settingsOpen ? arcade.accent : arcade.foreground
       opacity: arcade.hasProblem && !arcade.settingsOpen ? 1 : 0.7
       font.family: arcade.fontFamily

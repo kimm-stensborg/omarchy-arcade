@@ -44,6 +44,10 @@ function settingsSchema() {
       group: "Panel", help: "Most tiles the wall will put in one row." },
     { key: "GROUP_VERSIONS", label: "Versions", kind: "choice", options: ["on", "off"], group: "Panel",
       help: "“on” shows each game once, however many regional versions you have; Tab switches." },
+    { key: "ATTRACT_AFTER", label: "Attract mode", kind: "choice", group: "Panel",
+      options: ["off", "30", "60", "120", "300"],
+      labels: { off: "off", "30": "after 30 seconds", "60": "after a minute", "120": "after 2 minutes", "300": "after 5 minutes" },
+      help: "Left alone, the panel shows the games' title screens one after another, like a cabinet waiting for coins." },
     { key: "SORT_BY", label: "Sort by", kind: "choice", group: "Panel",
       options: ["last played", "favourites", "most played", "name", "year"],
       help: "The order of the wall. Alt+O on the wall changes it too." },
@@ -137,6 +141,7 @@ function isOverridden(row) {
 // holds it is where that belongs.
 function describeState(row) {
   if (!row || row.state !== "missing") return ""
+  if (row.kind === "check") return "Show › Won't start (Alt+V) lists them, each with its reason."
   if (row.kind === "padinfo") return row.status.text
   return row.key === "ROM_DIR" ? "no such directory" : "no such file"
 }
@@ -153,6 +158,7 @@ function describeSource(row) {
   }
   if (row.kind === "padinfo") return row.status.text
   if (row.kind === "padtest") return ""
+  if (row.kind === "check") return row.status || ""
   if (row.source === "file") return row.kind === "bind" || row.layout ? "set for the arcade" : "set here"
   if (row.source === "retroarch") return "from your RetroArch config"
   if (row.source === "env") return "from the environment"
@@ -343,7 +349,33 @@ function gameSchema() {
 
 // The game's rows for the editor: its settings, then the controls, each
 // saying whether it is this game's own or the arcade's.
-function gameRows(parsed) {
+// The Library group's last row: test-load every game and remember which
+// start. `state` is { running, progress, broken, total }: what the check is
+// doing now, and how many games are known not to start.
+// The rows with the check row placed last in the Library group, where it
+// belongs beside the ROM directory it tests.
+function withCheckRow(rows, state) {
+  var out = (rows || []).slice()
+  var at = 0
+  for (var i = 0; i < out.length; i++) if (out[i].group === "Library") at = i + 1
+  out.splice(at, 0, libraryCheckRow(state))
+  return out
+}
+
+function libraryCheckRow(state) {
+  var st = state || ({})
+  var value = st.running ? (st.progress || "checking…")
+    : st.result ? st.result
+    : (st.broken ? st.broken + (st.broken === 1 ? " game won't start" : " games won't start")
+                 : "load every game once, see which start")
+  return { key: "LIBRARY_CHECK", label: "Check the library", kind: "check", group: "Library",
+           source: "check", state: st.broken && !st.running ? "missing" : "ok", value: value,
+           status: st.running ? "Loading each game with no window or sound, the way adding one does."
+             : "Games checked before are only checked again when their file changes.",
+           help: "Test-loads every game, the way adding one does, and marks the ones that won't start." }
+}
+
+function gameRows(parsed, game) {
   var p = parsed || parseGame("")
   var values = p.values || ({})
   var rows = []
@@ -363,6 +395,10 @@ function gameRows(parsed) {
       row.value = known ? String(known.value) : ""
       row.source = known ? known.source : "default"
     }
+    // A game made for a screen standing on its side: rotation is how it
+    // fills a monitor turned the same way.
+    if (row.key === "ROTATE" && game && game.vertical)
+      row.help = "This game's screen stands on its side. On a monitor turned the same way, 90° or 270° fills it."
     if (row.key === "SHADER") {
       var offered = (p.options && p.options.SHADER) || []
       var labels = { "": "as RetroArch", none: "none" }

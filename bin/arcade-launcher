@@ -28,6 +28,10 @@ readonly CONFIG_FILE="${ARCADE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy
 # by when you last played a game and by how often. State rather than cache -- losing it loses
 # something you did, not something that can be rebuilt.
 readonly HISTORY_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/arcade-history.tsv"
+# Whether each romset starts, as last found out -- by --check, by adding it,
+# or by playing it: "path<TAB>size<TAB>mtime<TAB>ok|broken<TAB>reason". A
+# result only counts while the file is the one it was found for.
+readonly CHECK_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/arcade-check.tsv"
 # Your favourite games, one ROM name per line. A name rather than a path, so
 # they survive moving ROM_DIR. Config rather than state: it is a list you
 # made, and worth keeping with the rest of your dotfiles.
@@ -45,7 +49,7 @@ readonly RETROARCH_BIN="${ARCADE_RETROARCH_BIN:-retroarch}"
 readonly SETTING_KEYS=(
   ROM_DIR ROM_EXTS CORE_PATH RETROARCH_CONFIG
   ARTWORK ART_KINDS ART_DIR
-  TILE_SIZE MAX_COLUMNS SORT_BY GROUP_VERSIONS
+  TILE_SIZE MAX_COLUMNS SORT_BY GROUP_VERSIONS ATTRACT_AFTER
   TITLES_FILE CACHE_FILE LOG_FILE MENU_CMD
 )
 
@@ -95,8 +99,10 @@ readonly PRESET_RETROARCH=(
 )
 
 # Absolute path to this script: the terminal we open for the diagnosis starts in
-# some other directory, so "$0" alone would not find us again.
-SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
+# some other directory, so "$0" alone would not find us again. Symlinks are
+# followed: run as ~/.local/bin/arcade-launcher, share/ is still the plugin's.
+SELF="$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null)" ||
+  SELF="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/${BASH_SOURCE[0]##*/}"
 readonly SELF
 
 # --------------------------------------------------------------------------
@@ -150,6 +156,9 @@ load_config() {
   # The copy that ships with the plugin, used when no user overrides exist yet,
   # so titles are clean the first time the panel opens.
   : "${SHIPPED_TITLES_FILE:=${SELF%/bin/*}/share/arcade-titles.tsv}"
+  # Genre, players and screen orientation per romset, from FinalBurn Neo's
+  # driver table (tools/make-gameinfo.py).
+  : "${GAMEINFO_FILE:=${SELF%/bin/*}/share/arcade-gameinfo.tsv}"
   : "${ARTWORK:=on}"
   : "${ART_KINDS:=titles snaps boxarts}"
   : "${ART_DIR:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade-art}"
@@ -158,6 +167,7 @@ load_config() {
   : "${TILE_SIZE:=300}"
   : "${MAX_COLUMNS:=6}"
   : "${SORT_BY:=last played}"
+  : "${ATTRACT_AFTER:=60}"
   : "${GROUP_VERSIONS:=on}"
   : "${CACHE_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade-titles.cache.tsv}"
   : "${LOG_FILE:=${XDG_CACHE_HOME:-$HOME/.cache}/omarchy/arcade.log}"
@@ -341,18 +351,24 @@ readonly BIOS_SETS=(
 # epoch, empty if never), "playing" for the one running right now, the
 # database's own title (which may differ from the one shown), and its year and
 # maker. A dmenu only ever sees the first.
+# The library as lines, installed games first. `catalogue` adds the games
+# FinalBurn Neo knows that are not in ROM_DIR, marked "missing" in the last
+# column with the bare ROM name for a path: "wishlist" only the ones you made
+# favourites, "all" every one. The menu passes nothing -- it can only launch.
 build_menu_lines() {
-  local playing=""
+  local catalogue="${1-}" playing=""
   playing="$(running_game | cut -f2)"
   seed_history
   {
     [[ -r "$FAVOURITES_FILE" ]] && sed 's/^/\x1d\t/' -- "$FAVOURITES_FILE"
+    [[ -r "$GAMEINFO_FILE" ]] && grep -v '^#' -- "$GAMEINFO_FILE" | sed 's/^/\x1b\t/'
+    check_lines | sed 's/^/\x1a\t/' 
     [[ -r "$HISTORY_FILE" ]] && cat -- "$HISTORY_FILE"
     printf '\036\n'
     title_sources
     printf '\034\n'
     find_roms
-  } | awk -F'\t' -v bios_sets="${BIOS_SETS[*]}" -v playing="$playing" '
+  } | awk -F'\t' -v bios_sets="${BIOS_SETS[*]}" -v playing="$playing" -v catalogue="$catalogue" '
     BEGIN {
       n_bios = split(bios_sets, names, " ")
       for (i = 1; i <= n_bios; i++) listed[names[i]] = 1
@@ -360,6 +376,12 @@ build_menu_lines() {
     }
     section < 0 && $0 == "\036" { section = 0; next }
     section < 0 && $1 == "\035" { if ($2 != "") starred[$2] = 1; next }
+    section < 0 && $1 == "\033" {
+      genre[$2] = $3; players[$2] = $4; orient[$2] = $5; parent[$2] = $6; known[$2] = 1
+      fbtitle[$2] = $7; fbyear[$2] = $8; fbmaker[$2] = $9
+      next
+    }
+    section < 0 && $1 == "\032" { if ($3 == "broken") problem[$2] = $4; next }
     section < 0 {
       if (NF < 2) next
       if ($1 + 0 > played[$2] + 0) played[$2] = $1
@@ -402,10 +424,31 @@ build_menu_lines() {
         # Two ROMs can share a title (a parent and its clone). Tag both with the
         # ROM name so the menu stays unambiguous and the right file gets launched.
         label = (seen[labels[i]] > 1) ? labels[i] " (" roms[i] ")" : labels[i]
-        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", label, paths[i], played[paths[i]], \
-          (paths[i] == playing ? "playing" : ""), dbtitle[roms[i]], dbyear[roms[i]], dbmaker[roms[i]], \
-          ((roms[i] in starred) ? "favourite" : ""), plays[paths[i]]
+        emit(label, paths[i], roms[i], played[paths[i]], (paths[i] == playing ? "playing" : ""), \
+             plays[paths[i]], problem[paths[i]], "")
+        installed[roms[i]] = 1
       }
+      if (catalogue == "") exit
+      # The rest of what FBNeo knows. A title of your own or a shipped one
+      # first, as for an installed game; otherwise the database title with its
+      # brackets off -- versions group into one tile, and the full name with
+      # its region is the facts line.
+      for (r in known) {
+        if (r in installed) continue
+        if (catalogue != "all" && !(r in starred)) continue
+        label = (r in title) ? title[r] : (dbtitle[r] != "" ? dbtitle[r] : fbtitle[r])
+        if (!(r in own)) { while (sub(/ *[\(\[][^\(\)\[\]]*[\)\]] *$/, "", label)) {} }
+        gsub(/ _ /, " \\& ", label)
+        if (label == "") label = r
+        emit(label, r, r, "", "", "", "", "missing")
+      }
+    }
+    function emit(label, path, rom, last, running, count, trouble, missing) {
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", label, path, last, running, \
+        (dbtitle[rom] != "" ? dbtitle[rom] : fbtitle[rom]), (dbyear[rom] != "" ? dbyear[rom] : fbyear[rom]), \
+        (dbmaker[rom] != "" ? dbmaker[rom] : fbmaker[rom]), ((rom in starred) ? "favourite" : ""), count, \
+        genre[rom], players[rom], orient[rom], trouble, \
+        ((rom in known) ? (parent[rom] != "" ? parent[rom] : rom) : ""), missing
     }
   ' | sort -f -t $'\t' -k1,1
 }
@@ -840,7 +883,10 @@ watch_launch() {
       reason="${reason:-RetroArch closed as soon as it started.}"
       break
     fi
-    grep -q '\[Core\] Geometry:' <<<"$chunk" && return 0
+    if grep -q '\[Core\] Geometry:' <<<"$chunk"; then
+      record_check "$rom" ok ""
+      return 0
+    fi
     sleep 0.25
     tries=$((tries + 1))
   done
@@ -849,6 +895,7 @@ watch_launch() {
   [[ -n "$reason" ]] || return 0
 
   forget_play "$rom" "$started"
+  record_check "$rom" broken "$reason"
   [[ "$(cut -f1 "$RUNNING_FILE" 2>/dev/null)" == "$pid" ]] && rm -f "$RUNNING_FILE"
   notify critical "$(rom_title "$rom") did not start. $reason
 Details: ${LOG_FILE/#$HOME\//\~/}"
@@ -906,6 +953,76 @@ probe_rom() {
   fi
   rm -f -- "$cfg" "$log"
   printf '%s' "$reason"
+}
+
+# ---- whether a romset starts
+
+# "size<TAB>mtime" of a file: what a check result is tied to.
+file_stamp() { stat --printf '%s\t%Y' -- "$1" 2>/dev/null; }
+
+# Remember what was found out about one romset, replacing what was known.
+record_check() {
+  local path="$1" verdict="$2" reason="${3//$'\t'/ }" stamp tmp
+  stamp="$(file_stamp "$path")" || return 0
+  mkdir -p "${CHECK_FILE%/*}" 2>/dev/null || return 0
+  [[ -e "$CHECK_FILE" ]] || : >"$CHECK_FILE" 2>/dev/null || return 0
+  tmp="$(mktemp "$CHECK_FILE.XXXXXX")" || return 0
+  { awk -F'\t' -v p="$path" '$1 != p' "$CHECK_FILE"
+    printf '%s\t%s\t%s\t%s\n' "$path" "$stamp" "$verdict" "${reason//$'\n'/ }"
+  } >"$tmp" && mv -f "$tmp" "$CHECK_FILE" || rm -f "$tmp"
+}
+
+# "path<TAB>ok|broken<TAB>reason" for every result still about the file that
+# is there now; a romset replaced since it was checked is simply not known.
+check_lines() {
+  [[ -r "$CHECK_FILE" ]] || return 0
+  local path size mtime verdict reason now
+  while IFS=$'\t' read -r path size mtime verdict reason; do
+    now="$(file_stamp "$path")" || continue
+    [[ "$now" == "$size"$'\t'"$mtime" ]] && printf '%s\t%s\t%s\n' "$path" "$verdict" "$reason"
+  done <"$CHECK_FILE"
+}
+
+# Test-load every game in ROM_DIR (or the romsets given), the way adding one
+# does, and remember which start. One already checked is not checked again
+# unless it changed, or --all is given. Prints "checking<TAB>name<TAB>n<TAB>of"
+# before each and "ok|broken|known-ok|known-broken<TAB>path<TAB>reason" after.
+cmd_check() {
+  local all=0 path rom index=0 reason known verdict
+  [[ "${1-}" == --all ]] && { all=1; shift; }
+  local -a paths=()
+  if (($#)); then
+    for path in "$@"; do
+      local wanted="$path"
+      [[ "$path" == */* ]] || path="$(resolve_rom_name "$path")" || { printf 'broken\t%s\t%s\n' "$wanted" "no such romset"; continue; }
+      paths+=("$path")
+    done
+  else
+    while IFS= read -r path; do
+      rom="${path##*/}"; rom="${rom%.*}"
+      is_bios_set "$rom" || paths+=("$path")
+    done < <(find_roms)
+  fi
+  local -A seen=()
+  while IFS=$'\t' read -r path verdict reason; do seen["$path"]="$verdict"$'\t'"$reason"; done < <(check_lines)
+  for path in "${paths[@]}"; do
+    index=$((index + 1))
+    if ((!all)) && [[ -n "${seen[$path]-}" ]]; then
+      known="${seen[$path]}"
+      printf 'known-%s\t%s\t%s\n' "${known%%$'\t'*}" "$path" "${known#*$'\t'}"
+      continue
+    fi
+    printf 'checking\t%s\t%d\t%d\n' "${path##*/}" "$index" "${#paths[@]}"
+    reason="$(cd -- "$ROM_DIR" 2>/dev/null && probe_rom "$path")"
+    if [[ -n "$reason" ]]; then
+      record_check "$path" broken "$reason"
+      printf 'broken\t%s\t%s\n' "$path" "$reason"
+    else
+      record_check "$path" ok ""
+      printf 'ok\t%s\t\n' "$path"
+    fi
+  done
+  return 0
 }
 
 # Is this romset a BIOS or device set rather than a game?
@@ -986,6 +1103,7 @@ cmd_add() {
       printf 'rejected\t%s\t%s\n' "$name" "$reason"
       continue
     fi
+    record_check "$dest" ok ""
     printf 'added\t%s\t%s\n' "$name" "$title"
     added+=("$rom")
   done
@@ -1232,7 +1350,13 @@ Usage:
   $PROGRAM                  Show the menu and launch the selected game
   $PROGRAM <romname>        Launch a game directly, e.g. "$PROGRAM bublbobl"
   $PROGRAM --list           Print "title<TAB>path<TAB>played<TAB>playing<TAB>db title<TAB>year<TAB>maker
-                            <TAB>favourite<TAB>plays"
+                            <TAB>favourite<TAB>plays<TAB>genre<TAB>players<TAB>orientation<TAB>problem
+                            <TAB>family (the parent set, when FinalBurn Neo knows the game)<TAB>missing"
+                            Favourites you do not have yet are listed too, marked "missing"
+  $PROGRAM --list --all     The same, with every game FinalBurn Neo knows that you do not have
+  $PROGRAM --check [--all] [ROM...]
+                            Test-load the games (all of ROM_DIR by default) and remember
+                            which start; --all checks again ones already checked
   $PROGRAM --game ROM       Print one game's own settings: title, artwork, picture, controls
   $PROGRAM --game-set ROM KEY=VALUE...
                             Change them (empty = back to the shared setting). Keys:
@@ -1282,6 +1406,7 @@ Configuration ($CONFIG_FILE, or the environment):
   TILE_SIZE         Overlay only: width a game tile aims for, in pixels
   MAX_COLUMNS       Overlay only: most tiles the wall puts in a row
   SORT_BY           Overlay only: last played | favourites | most played | name | year
+  ATTRACT_AFTER     Overlay only: seconds of no input before title screens cycle (off = never)
   GROUP_VERSIONS    Overlay only: on | off - one tile per game, Tab for its versions
 
 Controls are kept in ~/.config/omarchy/arcade-retroarch.cfg, which RetroArch
@@ -1668,7 +1793,7 @@ ensure_cache() {
 cmd_list() {
   ensure_cache
   local lines
-  lines="$(build_menu_lines)"
+  lines="$(build_menu_lines "${1:-wishlist}")"
   [[ -n "$lines" ]] || die "$EX_NO_ROMS" "no ROMs found in $ROM_DIR"
   printf '%s\n' "$lines"
 }
@@ -1740,6 +1865,17 @@ main() {
         [[ "$bind" == *=* ]] || die "$EX_USAGE" "not an ID=KEY pair: $bind"
         set_control "${bind%%=*}" "${bind#*=}"
       done
+      exit 0
+      ;;
+    --check)
+      shift
+      diagnose || true
+      drop_problem "$EX_NO_MENU"
+      if ((${#problems[@]})); then
+        report_text >&2
+        exit "$(first_problem_code)"
+      fi
+      cmd_check "$@"
       exit 0
       ;;
     --game)
@@ -1899,7 +2035,7 @@ main() {
         report_text >&2
         exit "$(first_problem_code)"
       fi
-      cmd_list
+      cmd_list "$([[ "${2-}" == --all ]] && echo all)"
       exit 0
       ;;
     -*)

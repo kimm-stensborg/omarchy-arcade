@@ -155,7 +155,7 @@ check("filters combine", titles(M.applyFilters(LIB, { show: "favourites", maker:
 check("no filters, nothing active", M.filtersActive({ show: "all", decade: "", maker: "" }), false)
 check("one is enough", M.filtersActive({ show: "all", maker: "Taito" }), true)
 check("a filter steps on", M.stepFilter({ show: "all" }, "show", M.showKeys(), 1).show, "favourites")
-check("and wraps back", M.stepFilter({ show: "all" }, "show", M.showKeys(), -1).show, "unplayed")
+check("and wraps back", M.stepFilter({ show: "all" }, "show", M.showKeys(), -1).show, "everything")
 check("the empty wall says why", M.emptyNote({ show: "favourites" }), "No favourites yet. Alt+F on a game adds it.")
 
 const STAR_SETS = M.groupGames(M.parseList([
@@ -197,6 +197,89 @@ check("stick hints, with versions", M.wallHints(true, true).map((h) => h.keys.jo
 check("a launcher error is its first line, unprefixed",
       M.launcherError("arcade-launcher: no such file: /x\nmore detail\n"), "no such file: /x")
 check("nothing said is nothing", M.launcherError(undefined), "")
+
+// ---------------------------------------------------------------- families
+
+const FAM = M.parseList([
+  // FBNeo knows these three: two versions of Bubble Bobble, and Bubble Bobble
+  // II, which is its own game even though its title starts the same way.
+  "Bubble Bobble\t/r/bublboblu.zip\t\t\tBubble Bobble (US, Ver 5.1)\t\t\t\t\t\t\t\t\tbublbobl",
+  "Bubble Bobble\t/r/bublbobl.zip\t\t\tBubble Bobble (Japan, Ver 0.1)\t\t\t\t\t\t\t\t\tbublbobl",
+  "Bubble Bobble II\t/r/bublbob2.zip\t\t\tBubble Bobble II (Ver 2.6O 1994/12/16)\t\t\t\t\t\t\t\t\tbublbob2",
+  // A MAME-only version FBNeo has no row for: it joins by its title.
+  "Bubble Bobble\t/r/boblbobl.zip\t\t\tBubble Bobble (bootleg)",
+  // Two sets FBNeo calls different games, however alike their titles.
+  "Snow Bros.\t/r/snowbros.zip\t\t\tSnow Bros. - Nick & Tom (set 1)\t\t\t\t\t\t\t\t\tsnowbros",
+  "Snow Bros.\t/r/snowbrox.zip\t\t\tSnow Bros. - Nick & Tom (set 2)\t\t\t\t\t\t\t\t\tsnowbrox",
+].join("\n"))
+check("the family is read", [FAM[0].family, FAM[3].family], ["bublbobl", ""])
+const FAMT = M.groupGames(FAM)
+check("versions group by FBNeo's family", FAMT.map((t) => t.versions.map((v) => v.rom)),
+      [["bublbobl", "bublboblu", "boblbobl"], ["bublbob2"], ["snowbros"], ["snowbrox"]])
+check("the parent set stands for the game", FAMT[0].rom, "bublbobl")
+check("FBNeo's word beats a title that looks the same", FAMT.length, 4)
+
+// --------------------------------------------------- beyond your collection
+
+const CAT = M.parseList([
+  "Bubble Bobble\t/r/bublbobl.zip\t\t\tBubble Bobble (Japan, Ver 0.1)\t1986\tTaito\t\t\tPlatform\t2\thorizontal\t\tbublbobl\t",
+  "Bubble Bobble\tbublboblr\t\t\tBubble Bobble (US, Ver 5.1)\t1986\tTaito\t\t\tPlatform\t2\thorizontal\t\tbublbobl\tmissing",
+  "Galaga\tgalaga\t\t\tGalaga (Namco rev. B)\t1981\tNamco\tfavourite\t\tVertical shooter\t2\tvertical\t\tgalaga\tmissing",
+  "Galaga\tgalagao\t\t\tGalaga (Namco)\t1981\tNamco\t\t\tVertical shooter\t2\tvertical\t\tgalaga\tmissing",
+].join("\n"))
+check("a game you do not have is marked, and keeps its ROM name", [CAT[0].installed, CAT[1].installed, CAT[1].rom], [true, false, "bublboblr"])
+const CATT = M.groupGames(CAT)
+check("still one tile per game", CATT.map((t) => t.rom), ["bublbobl", "galaga"])
+const ORDERED = M.groupGames(M.parseList([
+  "18 Holes Pro Golf\tholes18\t\t\t\t\t\t\t\t\t\t\t\ttpgolf\tmissing",
+  "Galaga\tgalaga\t\t\t\t\t\t\t\t\t\t\t\tgalaga\tmissing",
+  "Tournament Pro Golf\ttpgolf\t\t\t\t\t\t\t\t\t\t\t\ttpgolf\tmissing",
+].join("\n")))
+check("a family is listed by the name its tile shows", titles(ORDERED), ["Galaga", "Tournament Pro Golf"])
+check("your version stands for it, and Tab only steps through what you have",
+      [CATT[0].installed, CATT[0].versions.map((v) => v.rom), CATT[0].missingVersions], [true, ["bublbobl"], 1])
+check("a game you have none of shows all its versions", [CATT[1].installed, CATT[1].versions.length], [false, 2])
+check("your collection is the default view", titles(M.applyFilters(CATT, { show: "all" })), ["Bubble Bobble"])
+check("not in your collection", titles(M.applyFilters(CATT, { show: "missing" })), ["Galaga"])
+check("every game", M.applyFilters(CATT, { show: "everything" }).length, 2)
+check("a favourite you do not have yet is still a favourite", titles(M.applyFilters(CATT, { show: "favourites" })), ["Galaga"])
+check("only the choices that reach past your games need FBNeo's list",
+      M.showKeys().filter(M.needsCatalogue), ["missing", "everything"])
+check("the footer says how to get it", M.problemNote(CATT[1]),
+      "Not in your collection. FinalBurn Neo plays it as galaga.zip; Alt+A adds a romset")
+check("and so does the tile", M.tileNote(CATT[1], 0, "last played"), "not in your collection")
+
+// ------------------------------------------------------- facts and problems
+
+const FACTS = M.parseList([
+  "Bubble Bobble\t/r/bublbobl.zip\t\t\tBubble Bobble\t1986\tTaito\t\t\tPlatform\t2\thorizontal\t",
+  "Ms. Pac-Man\t/r/mspacman.zip\t\t\tMs. Pac-Man\t1981\tMidway\t\t\tMaze / Action\t2\tvertical\t",
+  "Metal Slug\t/r/mslug.zip\t\t\tMetal Slug\t1996\tNazca\t\t\tRun & gun\t2\thorizontal\t13 files are missing",
+  "Gauntlet\t/r/gauntlet.zip\t\t\tGauntlet\t1985\tAtari\t\t\tMaze\t4\thorizontal\t",
+  "Mystery\t/r/mystery.zip",
+].join("\n"))
+check("genre, players, screen and problem are read",
+      [FACTS[1].genres, FACTS[1].players, FACTS[1].vertical, FACTS[2].problem], [["Maze", "Action"], 2, true, "13 files are missing"])
+check("a romset nothing is known about has none of them",
+      [FACTS[4].genres, FACTS[4].players, FACTS[4].vertical, FACTS[4].problem], [[], 0, false, ""])
+check("the kinds of game, commonest first", M.genreOptions(FACTS), ["", "Maze", "Action", "Platform", "Run & gun"])
+check("a game of two kinds is found under either", titles(M.applyFilters(FACTS, { genre: "Action" })), ["Ms. Pac-Man"])
+check("the player counts the library has", M.playerOptions(FACTS), ["", "2", "4"])
+check("filtered by players", titles(M.applyFilters(FACTS, { players: "4" })), ["Gauntlet"])
+check("and said as words", [M.playersLabel(""), M.playersLabel("1"), M.playersLabel("4")], ["Any players", "1 player", "4 players"])
+check("show the ones that won't start", titles(M.applyFilters(FACTS, { show: "broken" })), ["Metal Slug"])
+check("a genre filter counts as a filter", M.filtersActive({ show: "all", genre: "Maze" }), true)
+check("the facts line tells what kind of game",
+      M.gameFacts(FACTS[1], 0), "Midway  ·  1981  ·  Maze / Action  ·  2 players  ·  vertical screen  ·  mspacman.zip")
+check("the footer gives the whole reason", M.problemNote(FACTS[2]), "Won't start: 13 files are missing")
+check("and nothing for one that starts", M.problemNote(FACTS[0]), "")
+check("a tile that won't start says so first", M.tileNote(FACTS[2], 0, "last played"), "won't start  ·  13 files are missing")
+
+const ARTMAP = { bublbobl: "/a/bublbobl.png", mspacman: "/a/mspacman.png", gauntlet: "/a/gauntlet.png", mslug: "" }
+const ORDER = M.attractOrder(FACTS, ARTMAP, 42)
+check("attract mode shows only games with a title screen", titles(ORDER).sort(), ["Bubble Bobble", "Gauntlet", "Ms. Pac-Man"])
+check("in an order the seed decides", titles(M.attractOrder(FACTS, ARTMAP, 42)), titles(ORDER))
+check("attract mode's wait, in seconds", [M.attractSeconds("60"), M.attractSeconds("off"), M.attractSeconds("")], [60, 0, 0])
 
 // -------------------------------------------------------------- one game
 

@@ -24,6 +24,10 @@ Row {
         hidden: arcade.decadeChoices.length < 2 },
       { id: "maker", label: arcade.filters.maker || "Any maker", key: "M", lit: !!arcade.filters.maker,
         hidden: arcade.makerChoices.length < 2 },
+      { id: "genre", label: arcade.filters.genre || "Any genre", key: "G", lit: !!arcade.filters.genre,
+        hidden: arcade.genreChoices.length < 2 },
+      { id: "players", label: Library.playersLabel(arcade.filters.players), key: "P",
+        lit: !!arcade.filters.players, hidden: arcade.playerChoices.length < 2 },
       { id: "clear", label: "Clear filters", key: "0", lit: false,
         hidden: !Library.filtersActive(arcade.filters) }
     ]
@@ -73,12 +77,15 @@ Row {
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         onClicked: function(mouse) {
+          // Held before anything changes: stepping a filter rebuilds every
+          // chip, this one included, and its context goes with it.
+          var panel = arcade
           var delta = mouse.button === Qt.RightButton ? -1 : 1
           var id = chip.modelData.id
-          if (id === "sort") arcade.stepSort(delta)
-          else if (id === "clear") arcade.clearFilters()
-          else arcade.stepFilter(id, delta)
-          arcade.focusKeys()
+          if (id === "sort") panel.stepSort(delta)
+          else if (id === "clear") panel.clearFilters()
+          else panel.stepFilter(id, delta)
+          panel.focusKeys()
         }
       }
     }

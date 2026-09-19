@@ -88,7 +88,7 @@ Item {
   // Which games are shown: all, favourites, played or never played, and a
   // decade and a maker ("" is any). For this open of the panel only, like
   // the search: a wall that opens half empty would look like lost games.
-  property var filters: ({ show: "all", decade: "", maker: "" })
+  property var filters: ({ show: "all", decade: "", maker: "", genre: "", players: "" })
   // Each game once, however many regional versions of it are in the ROM
   // directory; Tab steps through them. A search shows every version, since
   // "sfiiij" is typed by someone who wants that one.
@@ -96,12 +96,24 @@ Item {
   // group -> path of the version Tab last picked, for this open of the panel.
   property var pickedVersions: ({})
   readonly property bool searching: root.filterText.trim().length > 0
-  readonly property var wallSource: root.groupVersions ? Library.groupGames(root.games, root.pickedVersions) : root.games
-  readonly property var decadeChoices: Library.decadeOptions(root.wallSource)
-  readonly property var makerChoices: Library.makerOptions(root.wallSource)
+  // Your games, and -- once a Show choice reaching past them has asked for
+  // it -- every other game FinalBurn Neo knows, read in the background.
+  property var catalogue: []
+  property bool catalogueLoaded: false
+  readonly property var allGames: root.catalogue.length ? root.games.concat(root.catalogue) : root.games
+  readonly property var wallSource: root.groupVersions ? Library.groupGames(root.allGames, root.pickedVersions) : root.allGames
+  // The games the Show chip has in view; the other filters offer only what
+  // is among them, so browsing your own games never lists 400 makers.
+  readonly property var scoped: root.wallSource.filter(function(g) { return Library.inScope(g, root.filters.show) })
+  // The same, every version on its own: what a search looks through.
+  readonly property int searchPool: root.allGames.filter(function(g) { return Library.inScope(g, root.filters.show) }).length
+  readonly property var decadeChoices: Library.decadeOptions(root.scoped)
+  readonly property var makerChoices: Library.makerOptions(root.scoped)
+  readonly property var genreChoices: Library.genreOptions(root.scoped)
+  readonly property var playerChoices: Library.playerOptions(root.scoped)
   // A search ranks by how well each game matches; the filters hold either way.
   readonly property var rows: root.searching
-    ? Library.applyFilters(Library.filterGames(root.games, root.filterText), root.filters)
+    ? Library.applyFilters(Library.filterGames(root.allGames, root.filterText), root.filters)
     : Library.sortGames(Library.applyFilters(root.wallSource, root.filters), root.sortBy)
   // The selected game's title screen, blurred behind everything. It follows
   // the selection a beat late, so holding the lever does not decode a
@@ -155,8 +167,9 @@ Item {
   // One editor, two files: arcade.conf decides what the panel does, the arcade
   // RetroArch profile decides what the cabinet's buttons do.
   readonly property var settingsRows: root.gameRom
-    ? Settings.withPending(Settings.gameRows(root.gameParsed), root.pendingGame)
-    : Settings.withPending(Settings.settingsRows(root.settingsParsed), root.pendingSettings)
+    ? Settings.withPending(Settings.gameRows(root.gameParsed, root.gameEntry), root.pendingGame)
+    : Settings.withCheckRow(Settings.withPending(Settings.settingsRows(root.settingsParsed), root.pendingSettings),
+                            root.checkState)
       .concat(Pad.controllerRows(root.controllerParsed))
       .concat(Controls.controlRows(root.controlsParsed))
 
@@ -166,6 +179,62 @@ Item {
   // arcade-wide settings.
   property string gameRom: ""
   property string gameTitle: ""
+  // The game as the wall has it, for what the editor can say about it (its
+  // screen standing on its side, say).
+  property var gameEntry: null
+
+  // ---- attract mode
+  // Left alone on the wall, the panel shows the games' title screens one after
+  // another, like a cabinet waiting for coins. Any key, button or mouse
+  // movement ends it -- and does nothing else, so waking it never starts a
+  // game by accident.
+  property bool attract: false
+  property var attractGames: []
+  property int attractIndex: 0
+  readonly property int attractAfter: Library.attractSeconds(
+    (root.settingsParsed.values.ATTRACT_AFTER || {}).value || "60")
+  readonly property var attractGame: root.attract && root.attractGames.length
+    ? root.attractGames[root.attractIndex % root.attractGames.length] : null
+
+  function startAttract() {
+    // Only games you can play: a cabinet does not advertise what it lacks.
+    var order = Library.attractOrder(root.wallSource.filter(function(g) { return g.installed !== false }),
+                                     root.artMap, Date.now())
+    // Two title screens at least, or it is just a picture.
+    if (order.length < 2) { idleTimer.restart(); return }
+    root.stopStickRepeat()
+    root.attractGames = order
+    root.attractIndex = 0
+    root.attract = true
+  }
+
+  function stopAttract() {
+    root.attract = false
+    root.attractGames = []
+    backdropTimer.restart()
+    idleTimer.restart()
+  }
+
+  // Whatever was just done counts as someone being there. Returns true when
+  // it only woke the panel, so the caller drops it.
+  function wake() {
+    if (root.attract) { root.stopAttract(); return true }
+    idleTimer.restart()
+    return false
+  }
+
+  // ---- the library check
+  // Test-loading every game in the background; see Settings.libraryCheckRow.
+  property string checkProgress: ""
+  // What the last check found, said on its own row: the info bar that says
+  // it on the wall is hidden while the settings are open.
+  property string checkResult: ""
+  readonly property var checkState: ({
+    running: checkProc.running,
+    progress: root.checkProgress,
+    result: root.checkResult,
+    broken: root.games.filter(function(g) { return !!g.problem }).length
+  })
   property var gameParsed: Settings.parseGame("")
   property var pendingGame: ({})
   // rom -> a number bumped when its picture is replaced under the same
@@ -237,10 +306,12 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
     root.opened = true
+    root.attract = false
     root.now = Date.now() / 1000
     root.pickedVersions = ({})
+    root.checkResult = ""
     root.sortChoice = ""
-    root.filters = ({ show: "all", decade: "", maker: "" })
+    root.filters = ({ show: "all", decade: "", maker: "", genre: "", players: "" })
     root.filterText = payload.filter ? String(payload.filter) : ""
     root.selectedIndex = 0
     root.statusMessage = ""
@@ -253,6 +324,7 @@ Item {
   }
 
   function close() {
+    root.attract = false
     root.stopPadTest()
     root.stopStickRepeat()
     root.flushSettings()
@@ -308,9 +380,11 @@ Item {
   function openGame() {
     var game = root.selected
     if (!game || root.hasProblem) return
+    if (game.installed === false) { root.addOk = false; root.addNote = Library.problemNote(game); return }
     root.closeSettings()
     root.gameRom = game.rom
     root.gameTitle = game.title
+    root.gameEntry = game
     root.gameParsed = Settings.parseGame("")
     root.pendingGame = ({})
     root.settingsIndex = 0
@@ -364,6 +438,16 @@ Item {
     root.requestArt()
   }
 
+  // Test-load every game not checked yet; the wall is re-read when it is done,
+  // so a game that won't start shows it.
+  function startCheck() {
+    if (checkProc.running || addProc.running) return
+    root.checkProgress = "starting…"
+    checkProc.found = 0
+    checkProc.checked = 0
+    checkProc.running = true
+  }
+
   function openSettings() {
     root.closeSettings()
     root.settingsOpen = true
@@ -403,6 +487,7 @@ Item {
 
     var press = Pad.padPress(root.controllerParsed, line)
     if (!press) return
+    if (root.opened && press.down && !root.padTesting && root.wake()) return
 
     if (root.padTesting) {
       var next = Pad.padEvent(root.padState, root.controllerParsed, line)
@@ -462,6 +547,7 @@ Item {
         if (row.kind === "choice") root.stepSetting(1)
         else if (row.kind === "padtest") root.startPadTest()
         else if (row.kind === "image") root.pickImage()
+        else if (row.kind === "check") root.startCheck()
       }
       return
     }
@@ -507,6 +593,7 @@ Item {
     if (row.kind === "image") { root.pickImage(); return }
     if (row.kind === "bind") { root.beginCapture(); return }
     if (row.kind === "padtest") { root.startPadTest(); return }
+    if (row.kind === "check") { root.startCheck(); return }
     root.editingIndex = root.settingsIndex
     root.editText = seed === undefined ? row.value : seed
     root.settingsError = ""
@@ -689,7 +776,7 @@ Item {
     // Typing goes straight into the row rather than needing Enter first, and
     // appends rather than replaces: a path is usually being corrected, not
     // rewritten.
-    if (row && ["choice", "bind", "padinfo", "padtest", "image"].indexOf(row.kind) < 0) {
+    if (row && ["choice", "bind", "padinfo", "padtest", "image", "check"].indexOf(row.kind) < 0) {
       if (event.key === Qt.Key_Backspace) { root.beginEdit(String(row.value).slice(0, -1)); return true }
       if (root.isTypable(event)) { root.beginEdit(String(row.value) + event.text); return true }
     }
@@ -699,96 +786,99 @@ Item {
   // Every key on the wall, the editors and the stick test: the panel holds
   // the keyboard exclusively while it is up, so this is all of them.
   function handleKey(event) {
-  root.stickLast = false
-  // The test owns the keyboard while it runs: the stick is what is
-  // being tested, and Esc is the way back.
-  if (root.padTesting) {
-    if (event.key === Qt.Key_Escape) root.stopPadTest()
-    event.accepted = true
-    return
-  }
-  if (root.settingsOpen) {
-    event.accepted = root.settingsKey(event)
-    return
-  }
-  // Alt+S for the settings, beside Alt+A for adding games.
-  if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_S) {
-    root.openSettings()
-    event.accepted = true
-    return
-  }
-  // Alt+F makes the selected game a favourite; Alt+O sorts, and
-  // Alt+V, Alt+D, Alt+M filter -- with Shift, the other way round.
-  if ((event.modifiers & Qt.AltModifier) && !root.hasProblem) {
-    var back = (event.modifiers & Qt.ShiftModifier) ? -1 : 1
-    var handled = true
-    if (event.key === Qt.Key_F) root.toggleFavourite()
-    else if (event.key === Qt.Key_O) root.stepSort(back)
-    else if (event.key === Qt.Key_V) root.stepFilter("show", back)
-    else if (event.key === Qt.Key_D) root.stepFilter("decade", back)
-    else if (event.key === Qt.Key_M) root.stepFilter("maker", back)
-    else if (event.key === Qt.Key_0) root.clearFilters()
-    else if (event.key === Qt.Key_E) root.openGame()
-    else handled = false
-    if (handled) { event.accepted = true; return }
-  }
-  // Alt+A adds games: the file chooser.
-  if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
-    root.pickGames()
-    event.accepted = true
-    return
-  }
-  if (event.key === Qt.Key_Escape) {
-    root.close()
-    event.accepted = true
-  } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-    root.activate()
-    event.accepted = true
-  } else if (event.key === Qt.Key_Right || (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier))) {
-    root.move("right")
-    event.accepted = true
-  } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
-    root.move("left")
-    event.accepted = true
-  } else if (event.key === Qt.Key_Down) {
-    root.move("down")
-    event.accepted = true
-  } else if (event.key === Qt.Key_Up) {
-    root.move("up")
-    event.accepted = true
-  } else if (event.key === Qt.Key_PageDown) {
-    root.move("page-down")
-    event.accepted = true
-  } else if (event.key === Qt.Key_PageUp) {
-    root.move("page-up")
-    event.accepted = true
-  } else if (event.key === Qt.Key_Home) {
-    root.setSelected(0)
-    event.accepted = true
-  } else if (event.key === Qt.Key_End) {
-    root.setSelected(root.rows.length - 1)
-    event.accepted = true
-  } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-    // Another version of the same game, in the same tile: the wall
-    // does not move, only what Enter will start.
-    if (root.selected && Library.versionCount(root.selected) > 1)
-      root.pickedVersions = Library.stepVersion(root.pickedVersions, root.selected,
-                                              event.key === Qt.Key_Backtab ? -1 : 1)
-    event.accepted = true
-  } else if (event.key === Qt.Key_F5) {
-    // The config file is as likely to have changed as the ROM
-    // directory, and a hand edit should not need the panel reopened.
-    root.loadSettings()
-    root.refresh()
-    event.accepted = true
-  } else if (Util.editsFilter(event, root.filterText)) {
-    root.setFilter(Util.editedFilter(event, root.filterText))
-    event.accepted = true
-  } else if (event.text && event.text.length === 1
-             && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
-    root.setFilter(root.filterText + event.text)
-    event.accepted = true
-  }
+    root.stickLast = false
+    if (root.wake()) { event.accepted = true; return }
+    // The test owns the keyboard while it runs: the stick is what is
+    // being tested, and Esc is the way back.
+    if (root.padTesting) {
+      if (event.key === Qt.Key_Escape) root.stopPadTest()
+      event.accepted = true
+      return
+    }
+    if (root.settingsOpen) {
+      event.accepted = root.settingsKey(event)
+      return
+    }
+    // Alt+S for the settings, beside Alt+A for adding games.
+    if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_S) {
+      root.openSettings()
+      event.accepted = true
+      return
+    }
+    // Alt+F makes the selected game a favourite; Alt+O sorts, and Alt+V,
+    // Alt+D, Alt+M, Alt+G, Alt+P filter -- with Shift, the other way round.
+    if ((event.modifiers & Qt.AltModifier) && !root.hasProblem) {
+      var back = (event.modifiers & Qt.ShiftModifier) ? -1 : 1
+      var handled = true
+      if (event.key === Qt.Key_F) root.toggleFavourite()
+      else if (event.key === Qt.Key_O) root.stepSort(back)
+      else if (event.key === Qt.Key_V) root.stepFilter("show", back)
+      else if (event.key === Qt.Key_D) root.stepFilter("decade", back)
+      else if (event.key === Qt.Key_M) root.stepFilter("maker", back)
+      else if (event.key === Qt.Key_G) root.stepFilter("genre", back)
+      else if (event.key === Qt.Key_P) root.stepFilter("players", back)
+      else if (event.key === Qt.Key_0) root.clearFilters()
+      else if (event.key === Qt.Key_E) root.openGame()
+      else handled = false
+      if (handled) { event.accepted = true; return }
+    }
+    // Alt+A adds games: the file chooser.
+    if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
+      root.pickGames()
+      event.accepted = true
+      return
+    }
+    if (event.key === Qt.Key_Escape) {
+      root.close()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      root.activate()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Right || (event.key === Qt.Key_N && (event.modifiers & Qt.ControlModifier))) {
+      root.move("right")
+      event.accepted = true
+    } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier))) {
+      root.move("left")
+      event.accepted = true
+    } else if (event.key === Qt.Key_Down) {
+      root.move("down")
+      event.accepted = true
+    } else if (event.key === Qt.Key_Up) {
+      root.move("up")
+      event.accepted = true
+    } else if (event.key === Qt.Key_PageDown) {
+      root.move("page-down")
+      event.accepted = true
+    } else if (event.key === Qt.Key_PageUp) {
+      root.move("page-up")
+      event.accepted = true
+    } else if (event.key === Qt.Key_Home) {
+      root.setSelected(0)
+      event.accepted = true
+    } else if (event.key === Qt.Key_End) {
+      root.setSelected(root.rows.length - 1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+      // Another version of the same game, in the same tile: the wall
+      // does not move, only what Enter will start.
+      if (root.selected && Library.versionCount(root.selected) > 1)
+        root.pickedVersions = Library.stepVersion(root.pickedVersions, root.selected,
+                                                event.key === Qt.Key_Backtab ? -1 : 1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_F5) {
+      // The config file is as likely to have changed as the ROM
+      // directory, and a hand edit should not need the panel reopened.
+      root.loadSettings()
+      root.refresh()
+      event.accepted = true
+    } else if (Util.editsFilter(event, root.filterText)) {
+      root.setFilter(Util.editedFilter(event, root.filterText))
+      event.accepted = true
+    } else if (event.text && event.text.length === 1
+               && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+      root.setFilter(root.filterText + event.text)
+      event.accepted = true
+    }
   }
 
   // ------------------------------------------------------------- navigation
@@ -834,15 +924,19 @@ Item {
   function stepFilter(which, delta) {
     var game = root.selected
     var options = which === "show" ? Library.showKeys()
-      : (which === "decade" ? root.decadeChoices : root.makerChoices)
+      : which === "decade" ? root.decadeChoices
+      : which === "genre" ? root.genreChoices
+      : which === "players" ? root.playerChoices
+      : root.makerChoices
     if (options.length < 2) return
     root.filters = Library.stepFilter(root.filters, which, options, delta)
+    if (Library.needsCatalogue(root.filters.show)) root.loadCatalogue()
     root.keepSelection(game, 0)
   }
 
   function clearFilters() {
     var game = root.selected
-    root.filters = ({ show: "all", decade: "", maker: "" })
+    root.filters = ({ show: "all", decade: "", maker: "", genre: "", players: "" })
     root.keepSelection(game, 0)
   }
 
@@ -925,10 +1019,44 @@ Item {
 
   function activate() {
     if (root.hasProblem) { root.refresh(); return }
+    // A game you do not have: say what it would take, rather than nothing.
+    if (root.selected && root.selected.installed === false) {
+      root.addOk = false
+      root.addNote = Library.problemNote(root.selected)
+      return
+    }
     root.launch(root.selected)
   }
 
+  // FinalBurn Neo's whole list, for the Show choices that reach past your
+  // games. Read once, and again with the library, which may have taken some
+  // of it in since.
+  function loadCatalogue() {
+    if (catalogueProc.running) return
+    if (!root.catalogueLoaded) root.statusMessage = "Reading FinalBurn Neo's list of games…"
+    catalogueProc.running = true
+  }
+
   // --------------------------------------------------------------- backends
+
+  Process {
+    id: catalogueProc
+    command: [root.launcher, "--list", "--all"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // Only what --list did not already give: your games, and favourites
+        // you do not have yet, are in root.games.
+        var have = ({})
+        for (var i = 0; i < root.games.length; i++) have[root.games[i].rom] = true
+        var game = root.selected
+        root.catalogue = Library.parseList(text).filter(function(g) { return g.installed === false && !have[g.rom] })
+        root.catalogueLoaded = true
+        if (root.statusMessage.indexOf("FinalBurn Neo") >= 0) root.statusMessage = ""
+        root.keepSelection(game, 0)
+      }
+    }
+  }
 
   Process {
     id: listProc
@@ -938,6 +1066,7 @@ Item {
       onStreamFinished: {
         root.games = Library.parseList(text)
         root.loaded = true
+        if (root.catalogueLoaded || Library.needsCatalogue(root.filters.show)) root.loadCatalogue()
         root.selectedIndex = 0
         if (root.pendingSelectRom) {
           var rom = root.pendingSelectRom
@@ -1019,6 +1148,33 @@ Item {
       } else if (imageErr.text && imageErr.text.trim()) {
         root.settingsError = Library.launcherError(imageErr.text)
       }
+    }
+  }
+
+  Process {
+    id: checkProc
+    property int found: 0
+    property int checked: 0
+    command: [root.launcher, "--check"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        var progress = Library.addProgress(line)
+        if (progress) { root.checkProgress = progress; root.statusMessage = progress; return }
+        var verdict = line.split("\t")[0]
+        if (verdict === "broken") checkProc.found++
+        if (verdict === "ok" || verdict === "broken") checkProc.checked++
+      }
+    }
+    onExited: function(exitCode) {
+      root.checkProgress = ""
+      root.statusMessage = ""
+      root.addOk = checkProc.found === 0
+      root.addNote = exitCode !== 0 ? "The library could not be checked"
+        : checkProc.checked === 0 ? "Every game was checked before; nothing has changed since"
+        : "Checked " + checkProc.checked + (checkProc.checked === 1 ? " game" : " games")
+          + (checkProc.found ? "  ·  " + checkProc.found + " won't start" : "  ·  all of them start")
+      root.checkResult = root.addNote
+      root.refresh()
     }
   }
 
@@ -1328,6 +1484,10 @@ Item {
 
     BorderSurface {
       id: card
+      // Out of the way while the title screens run.
+      opacity: root.attract ? 0 : 1
+      visible: opacity > 0
+      Behavior on opacity { NumberAnimation { duration: 600; easing.type: Easing.InOutQuad } }
       width: root.cardWidth
       height: root.cardHeight
       radius: root.cornerRadius
@@ -1377,6 +1537,8 @@ Item {
         }
       }
     }
+
+    AttractMode { anchors.fill: parent; arcade: root }
 
     // Files held over the panel: the card says what letting go will do.
     Rectangle {
@@ -1450,6 +1612,25 @@ Item {
 
   // Long enough that a run of arrow presses is one write, short enough that
   // the file is current by the time anyone could look at it.
+  // Quiet for ATTRACT_AFTER seconds on the wall: title screens take over.
+  Timer {
+    id: idleTimer
+    interval: Math.max(1, root.attractAfter) * 1000
+    running: root.opened && root.attractAfter > 0 && !root.attract && !root.settingsOpen
+      && !root.hasProblem && !checkProc.running && !addProc.running
+    onTriggered: root.startAttract()
+  }
+
+  // One title screen at a time, long enough to take in.
+  Timer {
+    id: attractStep
+    interval: 6500
+    repeat: true
+    running: root.attract
+    onTriggered: root.attractIndex = root.attractIndex + 1
+  }
+  onAttractGameChanged: if (root.attractGame) root.backdrop = Library.artFor(root.artMap, root.attractGame)
+
   Timer {
     id: gameWriteTimer
     interval: 220
