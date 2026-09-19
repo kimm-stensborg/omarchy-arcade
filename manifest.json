@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.kimm-stensborg.arcade",
   "name": "Arcade",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "author": "Kimm Stensborg",
   "license": "MIT",
   "description": "Pick an arcade game by its real name and boot it into RetroArch",
