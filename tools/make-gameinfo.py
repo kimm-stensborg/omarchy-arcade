@@ -124,8 +124,13 @@ def main(root):
                 n = players if players.isdigit() else ""
                 orient = "vertical" if "BDF_ORIENTATION_VERTICAL" in flags else "horizontal"
                 rows[rom] = (" / ".join(labels), n, orient, parent, title, year, maker)
-    sys.stdout.write("# rom\tgenre\tplayers\torientation\tparent\ttitle\tyear\tmaker"
-                     " -- made by tools/make-gameinfo.py from FinalBurn Neo\n")
+    sys.stdout.write(
+        "# rom\tgenre\tplayers\torientation\tparent\ttitle\tyear\tmaker\n"
+        "# Made by tools/make-gameinfo.py from FinalBurn Neo's driver table.\n"
+        "# FinalBurn Neo (https://github.com/finalburnneo/FBNeo) is used under its\n"
+        "# own licence, kept verbatim in licenses/fbneo-license.txt, which also\n"
+        "# carries the MAME licence FBNeo is subject to. Game names belong to their\n"
+        "# respective owners.\n")
     for rom in sorted(rows):
         sys.stdout.write("\t".join((rom,) + rows[rom]) + "\n")
     return 0

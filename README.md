@@ -134,3 +134,24 @@ The launcher also runs on plain Hyprland: see [`hypr/`](hypr) and [`udev/`](udev
 | `bin/arcade-rdb-dump` | reads the libretro databases |
 | `share/arcade-gameinfo.tsv` | every FBNeo game's genre, players, screen and parent set (`tools/make-gameinfo.py`) |
 | `share/arcade-titles.tsv` | title overrides |
+
+## Credits and licences
+
+The arcade's own code is MIT (see [`LICENSE`](LICENSE)). It stands on other
+people's work:
+
+- **[FinalBurn Neo](https://github.com/finalburnneo/FBNeo)** plays the games,
+  and its driver table is where `share/arcade-gameinfo.tsv` comes from. FBNeo's
+  licence, which covers that file and carries the MAME licence FBNeo is subject
+  to, is kept verbatim in [`licenses/fbneo-license.txt`](licenses/fbneo-license.txt).
+- **[libretro](https://github.com/libretro/libretro-database)** for the game
+  databases RetroArch ships, and
+  [thumbnails.libretro.com](https://thumbnails.libretro.com) for title screens,
+  in-game snaps and box art.
+- **Arcade Database by motoschifo**
+  ([adb.arcadeitalia.net](https://adb.arcadeitalia.net)) for marquees and
+  flyers, fetched one at a time as that site asks.
+
+Artwork is fetched to your own machine as you browse. Game names, titles and
+artwork belong to their respective owners, and are used here to show you which
+game is which.

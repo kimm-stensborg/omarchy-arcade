@@ -1,4 +1,9 @@
-# rom	genre	players	orientation	parent	title	year	maker -- made by tools/make-gameinfo.py from FinalBurn Neo
+# rom	genre	players	orientation	parent	title	year	maker
+# Made by tools/make-gameinfo.py from FinalBurn Neo's driver table.
+# FinalBurn Neo (https://github.com/finalburnneo/FBNeo) is used under its
+# own licence, kept verbatim in licenses/fbneo-license.txt, which also
+# carries the MAME licence FBNeo is subject to. Game names belong to their
+# respective owners.
 005	Maze	2	vertical		005	1981	Sega
 10yard	Sports	2	horizontal		10-Yard Fight (World, set 1)	1983	Irem
 10yard85	Sports	2	horizontal	10yard	10-Yard Fight '85 (US, Taito license)	1985	Irem (Taito license)
