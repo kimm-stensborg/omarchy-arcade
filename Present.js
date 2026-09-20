@@ -76,6 +76,13 @@ function wallHints(stick, versions, favourite) {
   return keys
 }
 
+// A kind of artwork, as the editor says it.
+function artKindLabel(kind) {
+  var labels = { titles: "title screen", snaps: "in-game", boxarts: "box art",
+                 marquees: "marquee", flyers: "flyer", custom: "your own picture" }
+  return labels[String(kind || "")] || String(kind || "")
+}
+
 // ------------------------------------------------------------ adding games
 
 // What `arcade-launcher --add` said, one "result<TAB>name<TAB>detail" line per

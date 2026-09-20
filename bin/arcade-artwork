@@ -38,11 +38,22 @@ SYSTEMS = (
 # Title screens first: the game's own logo, framed the same way every time, and
 # legible at tile size. An in-game snap is the fallback, then whatever boxart
 # exists -- many arcade titles never had a box.
-KINDS = {
+LIBRETRO_KINDS = {
     "titles": "Named_Titles",
     "snaps": "Named_Snaps",
     "boxarts": "Named_Boxarts",
 }
+
+# The Arcade Database files its pictures under the ROM name, which is what
+# the arcade calls a game anyway: the lit sign above the screen, and the
+# operator's advertising poster.
+ADB_URL = "https://adb.arcadeitalia.net/media/mame.current"
+ADB_KINDS = {
+    "marquees": "marquees",
+    "flyers": "flyers",
+}
+
+KINDS = dict(LIBRETRO_KINDS, **ADB_KINDS)
 DEFAULT_KINDS = ("titles", "snaps", "boxarts")
 
 TIMEOUT = 15
@@ -103,8 +114,10 @@ def game_art(rom):
     return ""
 
 
-def kinds_for(rom, kinds):
+def kinds_for(rom, kinds, exact=False):
     """A game's own choice first, then the usual order to fall back on."""
+    if exact:
+        return list(kinds)
     wanted = game_art(rom)
     if wanted in KINDS:
         return [wanted] + [k for k in kinds if k != wanted]
@@ -149,12 +162,17 @@ def load_gameinfo_titles(titles):
     return titles
 
 
-def thumbnail_urls(title, kinds):
-    name = urllib.parse.quote(ILLEGAL.sub("_", title) + ".png")
-    for system in SYSTEMS:
-        folder = urllib.parse.quote(system)
-        for kind in kinds:
-            yield "%s/%s/%s/%s" % (BASE_URL, folder, KINDS[kind], name)
+def thumbnail_urls(rom, title, kinds):
+    """(kind, where it lives) for each kind of picture, in the order asked for."""
+    for kind in kinds:
+        if kind in ADB_KINDS:
+            yield kind, "%s/%s/%s.png" % (ADB_URL, ADB_KINDS[kind], urllib.parse.quote(rom))
+            continue
+        if not title:
+            continue
+        name = urllib.parse.quote(ILLEGAL.sub("_", title) + ".png")
+        for system in SYSTEMS:
+            yield kind, "%s/%s/%s/%s" % (BASE_URL, urllib.parse.quote(system), LIBRETRO_KINDS[kind], name)
 
 
 def download(url):
@@ -168,17 +186,48 @@ def download(url):
     return data if data[:8] == b"\x89PNG\r\n\x1a\n" else None
 
 
-def fetch_one(rom, title, art_dir, kinds, unreachable=None):
+def kind_of(art_dir, rom):
+    """Which kind the cached picture is, as written beside it."""
+    try:
+        with open(os.path.join(art_dir, rom + ".kind"), "r", encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def remember_kind(art_dir, rom, kind):
+    try:
+        with open(os.path.join(art_dir, rom + ".kind"), "w", encoding="utf-8") as fh:
+            fh.write(kind + "\n")
+    except OSError:
+        pass
+
+
+def art_path(art_dir, rom, kind, exact):
+    """Where a picture is kept. A preview of one exact kind keeps its own file,
+    so flicking between kinds shows each one at once."""
+    return os.path.join(art_dir, rom + ("." + kind if exact else "") + ".png")
+
+
+def fetch_one(rom, title, art_dir, kinds, unreachable=None, exact=False):
     """Returns the path to this ROM's artwork, or "" when there is none."""
-    target = os.path.join(art_dir, rom + ".png")
-    if os.path.isfile(target) and os.path.getsize(target) > 0:
+    kinds_wanted = kinds_for(rom, kinds, exact)
+    target = art_path(art_dir, rom, kinds_wanted[0], exact)
+    cached = os.path.isfile(target) and os.path.getsize(target) > 0
+
+    miss = target[: -len(".png")] + ".miss"
+    # A picture of your own that has gone missing is not fetched over.
+    # A picture already here stays unless another kind is asked for now.
+    if cached and (exact or game_art(rom) == "custom" or kind_of(art_dir, rom) in ("", kinds_wanted[0])):
         return target
 
-    miss = os.path.join(art_dir, rom + ".miss")
-    # A picture of your own that has gone missing is not fetched over.
-    if os.path.exists(miss) or not title or game_art(rom) == "custom":
+    # A game the databases do not name can still have a picture filed under
+    # its ROM name.
+    if os.path.exists(miss) or (game_art(rom) == "custom" and not exact):
         return ""
-    kinds = kinds_for(rom, kinds)
+    if not title and not [k for k in kinds_wanted if k in ADB_KINDS]:
+        return ""
+    kinds = kinds_wanted
 
     # Whether the server ever actually answered, and whether anything went
     # unanswered. Only a 404 on every URL is a miss: a machine that is offline,
@@ -188,7 +237,8 @@ def fetch_one(rom, title, art_dir, kinds, unreachable=None):
     unsure = False
     noted = False
 
-    for url in thumbnail_urls(title, kinds):
+    for kind, url in thumbnail_urls(rom, title, kinds):
+        url_kind = kind
         try:
             data = download(url)
         except urllib.error.HTTPError as err:
@@ -217,6 +267,8 @@ def fetch_one(rom, title, art_dir, kinds, unreachable=None):
             with open(tmp, "wb") as fh:
                 fh.write(data)
             os.replace(tmp, target)
+            if not exact:
+                remember_kind(art_dir, rom, url_kind)
         except OSError:
             try:
                 os.unlink(tmp)
@@ -248,7 +300,9 @@ def main(argv):
     parser.add_argument("--titles", default=os.path.join(cache_home(), "omarchy", "arcade-titles.cache.tsv"),
                         help="rom<TAB>title cache to resolve names with")
     parser.add_argument("--kinds", default=",".join(DEFAULT_KINDS),
-                        help="artwork kinds to try, in order (titles,snaps,boxarts)")
+                        help="artwork kinds to try, in order (%s)" % ",".join(KINDS))
+    parser.add_argument("--kind", default="",
+                        help="exactly this kind, whatever the game itself asks for: for a preview")
     parser.add_argument("--offline", action="store_true",
                         help="only report what is already cached")
     parser.add_argument("--refresh", action="store_true",
@@ -263,7 +317,9 @@ def main(argv):
     # that are already there.
     offline = args.offline or artwork_disabled(config.get("ARTWORK", "on"))
 
-    kind_source = args.kinds if args.kinds != ",".join(DEFAULT_KINDS) else config.get("ART_KINDS", args.kinds)
+    exact = bool(args.kind)
+    kind_source = args.kind if exact else (
+        args.kinds if args.kinds != ",".join(DEFAULT_KINDS) else config.get("ART_KINDS", args.kinds))
     kinds = [k.strip() for k in kind_source.replace(",", " ").split() if k.strip() in KINDS]
     if not kinds:
         kinds = list(DEFAULT_KINDS)
@@ -294,8 +350,10 @@ def main(argv):
     # grid is already dressed before a single request goes out.
     pending = []
     for rom in roms:
-        path = os.path.join(args.dir, rom + ".png")
-        if os.path.isfile(path) and os.path.getsize(path) > 0:
+        wanted = kinds_for(rom, kinds, exact)[0]
+        path = art_path(args.dir, rom, wanted, exact)
+        fresh = exact or kind_of(args.dir, rom) in ("", wanted) or game_art(rom) == "custom"
+        if os.path.isfile(path) and os.path.getsize(path) > 0 and (fresh or offline):
             print("%s\t%s" % (rom, path), flush=True)
         elif offline:
             print("%s\t" % rom, flush=True)
@@ -309,7 +367,7 @@ def main(argv):
 
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         futures = {
-            pool.submit(fetch_one, rom, titles.get(rom, ""), args.dir, kinds, unreachable): rom
+            pool.submit(fetch_one, rom, titles.get(rom, ""), args.dir, kinds, unreachable, exact): rom
             for rom in pending
         }
         # As they land, not in the order asked: one slow server round trip

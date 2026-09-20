@@ -241,6 +241,31 @@ Item {
     return false
   }
 
+  // ---- the artwork preview
+  // The Artwork rows of a game's settings show the picture they would put on
+  // its tile, so a kind can be looked at before it is chosen. It is there
+  // while one of those rows is the one in hand, and gone otherwise.
+  readonly property string artKindsSetting: String((root.settingsParsed.values.ART_KINDS || {}).value || "titles snaps boxarts")
+  readonly property string previewKind: {
+    if (!root.settingsOpen || !root.gameRom || !root.settingsRow) return ""
+    var row = root.settingsRow
+    if (row.key === "ART") return row.value || root.artKindsSetting.split(" ")[0]
+    if (row.key === "ART_IMAGE") return row.value ? "custom" : ""
+    return ""
+  }
+  property string previewPath: ""
+  onPreviewKindChanged: {
+    root.previewPath = ""
+    if (!root.previewKind) return
+    if (root.previewKind === "custom") { root.previewPath = Library.artFor(root.artMap, root.selected); return }
+    previewProc.rom = root.gameRom
+    previewProc.kind = root.previewKind
+    previewProc.command = [root.artworkTool, "--dir", root.previewDir, "--kind", root.previewKind, root.gameRom]
+    previewProc.running = true
+  }
+  readonly property string previewDir: String((root.settingsParsed.values.ART_DIR || {}).value
+    || (root.home + "/.cache/omarchy/arcade-art")) + "-preview"
+
   // ---- the library check
   // Test-loading every game in the background; see Settings.libraryCheckRow.
   property string checkProgress: ""
@@ -1084,6 +1109,22 @@ Item {
     command: [root.launcher, "--resume"]
   }
 
+  // One kind of artwork for the game being edited, kept apart from the
+  // pictures on the wall until a kind is chosen.
+  Process {
+    id: previewProc
+    property string rom: ""
+    property string kind: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var parts = text.trim().split("\t")
+        if (previewProc.rom === root.gameRom && previewProc.kind === root.previewKind)
+          root.previewPath = parts.length > 1 ? parts[1] : ""
+      }
+    }
+  }
+
   Process {
     id: checkProc
     property int found: 0
@@ -1405,6 +1446,7 @@ Item {
             Wall { id: wallView; arcade: root }
             PadTest { arcade: root }
             SettingsList { id: settingsView; arcade: root }
+            ArtPreview { arcade: root }
           }
 
           // ------------------------------------------------------------ footer

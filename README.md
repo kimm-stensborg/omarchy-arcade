@@ -12,6 +12,7 @@
 - **Wall of title screens** with real names, sorted by last played, favourites, most played, name or year
 - **Search and filters:** type to search; filter by favourites, played, decade, maker, genre and players
 - **Every game FinalBurn Neo knows:** browse all ~2,750 arcade games, yours and the rest, and keep a wishlist
+- **Artwork** per game or overall: title screen, in-game, box art, marquee or flyer
 - **Favourites** marked with a heart
 - **Versions** of a game share one tile; `Tab` picks one
 - **Each game's own settings:** name, artwork, shader, smoothing, shape, scaling, rotation, controls
@@ -103,7 +104,7 @@ Any controller RetroArch has a profile for works. **Settings › Test the stick*
 
 **Controls:** pick MAME standard (coin `5`, start `1`, `Ctrl` `Alt` `Space`...) or RetroArch's layout, or bind each control by pressing the key.
 
-**A game's own settings** (`Alt+E`) — name, continue, artwork, picture, controls — are saved in `~/.config/omarchy/arcade-games/<rom>.cfg` and apply to that game only.
+**A game's own settings** (`Alt+E`) — name, continue, artwork (with a preview as you choose), picture, controls — are saved in `~/.config/omarchy/arcade-games/<rom>.cfg` and apply to that game only.
 
 ## Command line
 

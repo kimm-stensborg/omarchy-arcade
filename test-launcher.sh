@@ -289,6 +289,10 @@ check "no shader at all" "$(game bublbobl SHADER),$(grep -c 'video_shader_enable
 art="$XDG_CACHE_HOME/omarchy/arcade-art"
 mkdir -p "$art"
 printf 'old' >"$art/bublbobl.png"
+"$launcher" --game-set bublbobl ART=marquees
+check "a game can wear its marquee" "$(game bublbobl ART)" "marquees|game"
+"$launcher" --game-set bublbobl ART=nosuchkind 2>/dev/null
+check "and only the kinds there are" "$?" "64"
 "$launcher" --game-set bublbobl ART=snaps
 check "another kind of artwork drops the cached picture" "$([[ -e "$art/bublbobl.png" ]] && echo kept || echo gone)" "gone"
 printf 'not an image' >"$sandbox/fake.png"

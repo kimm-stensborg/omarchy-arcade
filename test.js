@@ -299,6 +299,8 @@ const GAME = M.parseGame([
 check("the game is read", [GAME.rom, GAME.present], ["bublbobl", true])
 const grows = M.gameRows(GAME)
 const grow = (k) => grows.find((r) => r.key === k)
+check("each kind of artwork has a name", [M.artKindLabel("marquees"), M.artKindLabel("flyers"), M.artKindLabel("")],
+      ["marquee", "flyer", ""])
 check("a game can pick up where you left off", grow("CONTINUE").options, ["", "on", "off"])
 check("the name row is typed", [grow("TITLE").kind, grow("TITLE").value], ["text", "Bubble Bobble"])
 check("the database's name is not the game's own", M.isOverridden(grow("TITLE")), false)

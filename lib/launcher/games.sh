@@ -157,7 +157,8 @@ set_game() {
   put() { if [[ -n "$2" ]]; then cfg_write "$file" "$1" "$2"; else cfg_clear "$file" "$1"; fi; }
   case "$key" in
     ART)
-      case "$value" in ""|titles|snaps|boxarts|custom) ;; *) die "$EX_USAGE" "ART is titles, snaps, boxarts or custom" ;; esac
+      case "$value" in ""|titles|snaps|boxarts|marquees|flyers|custom) ;;
+        *) die "$EX_USAGE" "ART is titles, snaps, boxarts, marquees, flyers or custom" ;; esac
       # A picture of your own is only replaced by choosing another kind.
       [[ "$value" == custom ]] || forget_art "$rom"
       put arcade_art "$value" ;;
