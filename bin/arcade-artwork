@@ -57,7 +57,7 @@ KINDS = dict(LIBRETRO_KINDS, **ADB_KINDS)
 DEFAULT_KINDS = ("titles", "snaps", "boxarts")
 
 TIMEOUT = 15
-USER_AGENT = "omarchy-arcade/1.7 (+https://github.com/kimm-stensborg/omarchy-arcade)"
+USER_AGENT = "omarchy-arcade/1.8 (+https://github.com/kimm-stensborg/omarchy-arcade)"
 
 # libretro replaces these characters in thumbnail filenames.
 ILLEGAL = re.compile(r"[&*/:`<>?\\|\"]")
